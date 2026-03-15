@@ -1,354 +1,405 @@
 "use client";
 
 import { useAppStore } from '@/store/appStore';
-import { t } from '@/lib/i18n';
-import { Download, FileSpreadsheet, Calendar, Loader2, Fuel, Droplet, Calculator } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Download, FileSpreadsheet, Calendar, Loader2 } from 'lucide-react';
+import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { generatePDF } from '@/lib/pdf';
+import { format, getDaysInMonth, parseISO, subMonths } from 'date-fns';
 
-interface NozzleRow {
-    machine: string;
-    nozzleNo: string;
-    product: string;
-    openingS1: number;
-    closingS2: number;
-    testingTotal: number;
-    saleVolTotal: number;
-    rate: number;
-    amountTotal: number;
+// ---- Dip-to-Volume Lookup Table (cm -> Liters) via linear interpolation ----
+const DIP_TABLE: Record<number, number> = {
+    1: 12, 2: 34, 3: 62, 4: 96, 5: 134, 6: 175, 7: 221, 8: 269, 9: 321, 10: 375,
+    11: 432, 12: 491, 13: 553, 14: 617, 15: 684, 16: 752, 17: 822, 18: 895, 19: 969, 20: 1045,
+    21: 1122, 22: 1201, 23: 1282, 24: 1365, 25: 1449, 26: 1534, 27: 1621, 28: 1709, 29: 1799, 30: 1890,
+    31: 1982, 32: 2075, 33: 2170, 34: 2265, 35: 2362, 36: 2460, 37: 2560, 38: 2660, 39: 2761, 40: 2863,
+    41: 2966, 42: 3071, 43: 3176, 44: 3282, 45: 3389, 46: 3496, 47: 3605, 48: 3714, 49: 3825, 50: 3936,
+    51: 4048, 52: 4160, 53: 4274, 54: 4388, 55: 4503, 56: 4618, 57: 4734, 58: 4851, 59: 4968, 60: 5086,
+    61: 5205, 62: 5324, 63: 5444, 64: 5564, 65: 5685, 66: 5807, 67: 5928, 68: 6051, 69: 6174, 70: 6297,
+    71: 6421, 72: 6545, 73: 6670, 74: 6795, 75: 6921, 76: 7047, 77: 7173, 78: 7300, 79: 7427, 80: 7554,
+    81: 7682, 82: 7810, 83: 7938, 84: 8067, 85: 8196, 86: 8325, 87: 8454, 88: 8584, 89: 8714, 90: 8819,
+    91: 8974, 92: 9105, 93: 9236, 94: 9367, 95: 9498, 96: 9629, 97: 9760, 98: 9892, 99: 10024, 100: 10156,
+    101: 10287, 102: 10419, 103: 10552, 104: 10684, 105: 10732, 106: 10864, 107: 10996, 108: 11128, 109: 11260, 110: 11392,
+    111: 11523, 112: 11655, 113: 11786, 114: 11917, 115: 12048, 116: 12179, 117: 12310, 118: 12441, 119: 12571, 120: 12701,
+    121: 12831, 122: 12961, 123: 13090, 124: 13219, 125: 13348, 126: 13476, 127: 13605, 128: 13733, 129: 13860, 130: 13988,
+    131: 14115, 132: 14241, 133: 14367, 134: 14493, 135: 14619, 136: 14744, 137: 14868, 138: 14993, 139: 15116, 140: 15240,
+    141: 15363, 142: 15485, 143: 15607, 144: 15728, 145: 15849, 146: 15969, 147: 16089, 148: 16208, 149: 16326, 150: 16444,
+    151: 16561, 152: 16678, 153: 16794, 154: 16909, 155: 17024, 156: 17138, 157: 17251, 158: 17364, 159: 17475, 160: 17586,
+    161: 17696, 162: 17806, 163: 17914, 164: 18022, 165: 18129, 166: 18234, 167: 18339, 168: 18443, 169: 18546, 170: 18648,
+    171: 18749, 172: 18849, 173: 18948, 174: 19046, 175: 19143, 176: 19238, 177: 19333, 178: 19426, 179: 19518, 180: 19608,
+    181: 19697, 182: 19785, 183: 19872, 184: 19957, 185: 20041, 186: 20123, 187: 20203, 188: 20282, 189: 20360, 190: 20435,
+    191: 20509, 192: 20581, 193: 20651, 194: 20719, 195: 20785, 196: 20848, 197: 20910, 198: 20969, 199: 21025, 200: 21079,
+    201: 21130, 202: 21178, 203: 21222, 204: 21263, 205: 21300, 206: 21333, 207: 21360, 208: 21380
+};
+
+function dipToLiters(cm: number): number {
+    if (!cm || cm <= 0) return 0;
+    const low = Math.floor(cm);
+    const high = Math.ceil(cm);
+    const lowVal = DIP_TABLE[low];
+    const highVal = DIP_TABLE[high];
+    if (lowVal === undefined || highVal === undefined) return 0;
+    return Math.round(lowVal + (cm - low) * (highVal - lowVal));
 }
+
+// Nozzle sets
+const MS_NOZZLES = ['Front-3', 'Front-4', 'Back-3', 'Back-4'];
+const HSD_NOZZLES = ['Front-1', 'Front-2', 'Back-1', 'Back-2'];
+
+/** Starting cumulative sales before this tracking period began (e.g. from manual records).
+ *  Update these constants whenever the historical baseline changes. */
+const DSR_INIT_CUM_PETROL = 1444;   // Petrol (MS) litres sold before month tracking start
+const DSR_INIT_CUM_DIESEL = 1511;   // Diesel (HSD) litres sold before month tracking start
+
+interface DayData { date: string; shifts: any[]; }
+interface BaselineMeters { [nozzle: string]: number; }
 
 export default function DsrReport() {
     const { language } = useAppStore();
-    const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+    const [month, setMonth] = useState(new Date().toISOString().substring(0, 7));
     const [loading, setLoading] = useState(false);
-
-    const [dsrData, setDsrData] = useState<any>(null);
+    const [rawData, setRawData] = useState<DayData[]>([]);
+    // Baseline: opening meters from last approved shift of the PREVIOUS month
+    const [prevMonthMeters, setPrevMonthMeters] = useState<BaselineMeters>({});
 
     useEffect(() => {
-        async function fetchDSR() {
+        async function fetchAll() {
             setLoading(true);
+            setRawData([]);
+            setPrevMonthMeters({});
+
             try {
-                // Fetch Approved Shifts for the Date
-                const { data: shifts, error } = await supabase
+                const startDate = `${month}-01`;
+                const daysInMonth = getDaysInMonth(parseISO(startDate));
+                const endDate = `${month}-${String(daysInMonth).padStart(2, '0')}`;
+
+                // ---- Fetch current month shifts ----
+                const { data: shifts } = await supabase
                     .from('shifts')
                     .select(`
-            id, shift_number,
-            shift_entries ( products(name), rate, sale_qty, amount, opening_meter, closing_meter, testing_qty, nozzle_no ),
-            shift_sides ( machine, side, cash_received, online_received, lube_sales )
+            id, shift_date, shift_number,
+            shift_entries ( nozzle_no, opening_meter, testing_qty ),
+            shift_tanks ( tank_name, manual_dip )
           `)
-                    .eq('shift_date', date)
-                    .eq('status', 'Approved');
+                    .eq('status', 'Approved')
+                    .gte('shift_date', startDate)
+                    .lte('shift_date', endDate)
+                    .order('shift_date', { ascending: true })
+                    .order('shift_number', { ascending: true });
 
-                if (error) throw error;
-
-                // Restructure Aggregation
-                const nozzleMap = new Map<string, NozzleRow>();
-
-                const agg = {
-                    totalSale: 0,
-                    lubeTotal: 0,
-                    cash: { s1: 0, s2: 0, total: 0 },
-                    online: { s1: 0, s2: 0, total: 0 },
-                    grandTotals: { msVol: 0, hsdVol: 0, msAmt: 0, hsdAmt: 0 }
-                };
-
-                (shifts || []).forEach((s: any) => {
-                    const isS1 = s.shift_number === 1;
-                    const sides = s.shift_sides || [];
-                    const entries = s.shift_entries || [];
-
-                    // Calculate sides (Cash / Online / Lube)
-                    let shiftCash = 0;
-                    let shiftOnline = 0;
-                    let shiftLube = 0;
-
-                    sides.forEach((side: any) => {
-                        shiftCash += parseFloat(side.cash_received) || 0;
-                        shiftOnline += parseFloat(side.online_received) || 0;
-                        shiftLube += parseFloat(side.lube_sales) || 0;
-                    });
-
-                    if (isS1) {
-                        agg.cash.s1 += shiftCash;
-                        agg.online.s1 += shiftOnline;
-                    } else {
-                        agg.cash.s2 += shiftCash;
-                        agg.online.s2 += shiftOnline;
-                    }
-
-                    agg.cash.total += shiftCash;
-                    agg.online.total += shiftOnline;
-                    agg.lubeTotal += shiftLube;
-                    agg.totalSale += shiftLube; // Lube included in total sales expectation
-
-                    // Calculate entries (Nozzle Mapping)
-                    entries.forEach((e: any) => {
-                        const machine = e.nozzle_no.split('-')[0];
-                        const nozNo = e.nozzle_no.split('-')[1];
-                        const prod = e.products?.name === 'MS' ? 'MS' : 'HSD';
-
-                        const nozzleKey = e.nozzle_no; // 'Front-1', 'Back-3'
-
-                        if (!nozzleMap.has(nozzleKey)) {
-                            nozzleMap.set(nozzleKey, {
-                                machine,
-                                nozzleNo: nozNo,
-                                product: prod,
-                                openingS1: 0,
-                                closingS2: 0,
-                                testingTotal: 0,
-                                saleVolTotal: 0,
-                                rate: parseFloat(e.rate) || 0,
-                                amountTotal: 0
-                            });
-                        }
-
-                        const row: any = nozzleMap.get(nozzleKey);
-
-                        // Map S1 Opening or S2 Closing
-                        if (isS1) {
-                            row.openingS1 = parseFloat(e.opening_meter) || 0;
-                            // If there is only Shift 1, its closing is the final closing so far
-                            if (row.closingS2 === 0) row.closingS2 = parseFloat(e.closing_meter) || 0;
-                        } else {
-                            // If Shift 2 exists, its closing meter takes overriding precedence
-                            row.closingS2 = parseFloat(e.closing_meter) || 0;
-                            // If S1 was missing, use S2's opening as a fallback baseline
-                            if (row.openingS1 === 0) row.openingS1 = parseFloat(e.opening_meter) || 0;
-                        }
-
-                        const testQty = parseFloat(e.testing_qty) || 0;
-                        const amt = parseFloat(e.amount) || 0;
-                        const vol = parseFloat(e.sale_qty) || 0;
-
-                        row.testingTotal += testQty;
-                        row.saleVolTotal += vol;
-                        row.amountTotal += amt;
-                        row.rate = parseFloat(e.rate) || row.rate;
-
-                        // Add to Grand Product Totals
-                        if (prod === 'MS') {
-                            agg.grandTotals.msVol += vol;
-                            agg.grandTotals.msAmt += amt;
-                        } else {
-                            agg.grandTotals.hsdVol += vol;
-                            agg.grandTotals.hsdAmt += amt;
-                        }
-
-                        agg.totalSale += amt;
-                    });
-                });
-
-                // Generate Array to sort cleanly
-                const orderedNozzles = Array.from(nozzleMap.values()).sort((a, b) => {
-                    if (a.machine !== b.machine) return a.machine.localeCompare(b.machine); // Front then Back
-                    return parseInt(a.nozzleNo) - parseInt(b.nozzleNo); // 1, 2, 3, 4
-                });
-
-                if (shifts && shifts.length > 0) {
-                    setDsrData({ agg, nozzles: orderedNozzles });
-                } else {
-                    setDsrData(null);
+                // Group by date
+                const dayMap = new Map<string, DayData>();
+                for (let d = 1; d <= daysInMonth; d++) {
+                    const dateStr = `${month}-${String(d).padStart(2, '0')}`;
+                    dayMap.set(dateStr, { date: dateStr, shifts: [] });
                 }
+                (shifts || []).forEach((s: any) => {
+                    const day = dayMap.get(s.shift_date);
+                    if (day) day.shifts.push(s);
+                });
+                setRawData(Array.from(dayMap.values()));
+
+                // ---- Fetch PREVIOUS month's last approved Shift 1 as baseline ----
+                const prevMonthDate = subMonths(parseISO(startDate), 1);
+                const prevMonth = format(prevMonthDate, 'yyyy-MM');
+                const prevDays = getDaysInMonth(prevMonthDate);
+                const prevStart = `${prevMonth}-01`;
+                const prevEnd = `${prevMonth}-${String(prevDays).padStart(2, '0')}`;
+
+                const { data: prevShifts } = await supabase
+                    .from('shifts')
+                    .select(`id, shift_date, shift_number, shift_entries ( nozzle_no, opening_meter )`)
+                    .eq('status', 'Approved')
+                    .eq('shift_number', 1)
+                    .gte('shift_date', prevStart)
+                    .lte('shift_date', prevEnd)
+                    .order('shift_date', { ascending: false })
+                    .limit(1);
+
+                const baseline: BaselineMeters = {};
+                if (prevShifts && prevShifts.length > 0) {
+                    (prevShifts[0].shift_entries || []).forEach((e: any) => {
+                        baseline[e.nozzle_no] = parseFloat(e.opening_meter) || 0;
+                    });
+                }
+                setPrevMonthMeters(baseline);
 
             } catch (err) {
-                console.error('Failed to fetch DSR', err);
+                console.error('DSR fetch error', err);
             } finally {
                 setLoading(false);
             }
         }
-        fetchDSR();
-    }, [date]);
+        fetchAll();
+    }, [month]);
+
+    // ---- Build one row per date ----
+    const processedRows = useMemo(() => {
+        // Cumulative starts from 0; the first day's known sales are injected via the init constants
+        let cumPetrol = 0;
+        let cumDiesel = 0;
+
+        // Rolling baseline from prev month. When empty, we have no meter reference.
+        const noPrevData = Object.keys(prevMonthMeters).length === 0;
+        let prevMeters: BaselineMeters = { ...prevMonthMeters };
+        let usedFirstDayOverride = false; // ensures init constants only apply to exactly day 1
+
+        return rawData.map(day => {
+            const s1 = day.shifts.find((s: any) => s.shift_number === 1);
+            const allShifts = day.shifts;
+            const tanks: any[] = s1?.shift_tanks || allShifts.flatMap((s: any) => s.shift_tanks || []);
+
+            if (!s1) {
+                return {
+                    date: day.date, hasData: false,
+                    dipMS: 0, msOpenStock: 0, msReceipt: 0, msTotalStock: 0,
+                    msD1: 0, msD2: 0, msD3: 0, msD4: 0,
+                    msTesting: 0, msSaleVol: 0, cumPetrol,
+                    dip1HSD: 0, hsd1Vol: 0, dip2HSD: 0, hsd2Vol: 0,
+                    hsdOpenStock: 0, hsdReceipt: 0, hsdTotalStock: 0,
+                    hsdD1: 0, hsdD2: 0, hsdD3: 0, hsdD4: 0,
+                    hsdTesting: 0, hsdSaleVol: 0, cumDiesel,
+                };
+            }
+
+            const s1Entries: any[] = s1.shift_entries || [];
+            const currentMeters: BaselineMeters = {};
+            s1Entries.forEach((e: any) => {
+                currentMeters[e.nozzle_no] = parseFloat(e.opening_meter) || 0;
+            });
+
+            const getOpen = (no: string) => currentMeters[no] || 0;
+            const getPrev = (no: string) => prevMeters[no] || 0;
+
+            const allEntries = allShifts.flatMap((s: any) => s.shift_entries || []);
+            const getTestSum = (nozzles: string[]) =>
+                allEntries.filter((e: any) => nozzles.includes(e.nozzle_no))
+                    .reduce((sum: number, e: any) => sum + (parseFloat(e.testing_qty) || 0), 0);
+
+            const msTesting = getTestSum(MS_NOZZLES);
+            const hsdTesting = getTestSum(HSD_NOZZLES);
+
+            let msSaleVol: number;
+            let hsdSaleVol: number;
+
+            if (noPrevData && !usedFirstDayOverride) {
+                // First data day of the very first tracked month — use the known starting sales directly
+                msSaleVol = DSR_INIT_CUM_PETROL;
+                hsdSaleVol = DSR_INIT_CUM_DIESEL;
+                usedFirstDayOverride = true;
+            } else {
+                // Normal formula: Σ(current_DSR - prev_DSR) - testing
+                msSaleVol = MS_NOZZLES.reduce((sum, no) => sum + (getOpen(no) - getPrev(no)), 0) - msTesting;
+                hsdSaleVol = HSD_NOZZLES.reduce((sum, no) => sum + (getOpen(no) - getPrev(no)), 0) - hsdTesting;
+            }
+
+            cumPetrol += Math.max(0, msSaleVol);
+            cumDiesel += Math.max(0, hsdSaleVol);
+
+            // ---- Tank dips ----
+            const tank3MS = tanks.find((t: any) => t.tank_name === '3-MS');
+            const tank1HSD = tanks.find((t: any) => t.tank_name === '1-HSD');
+            const tank2HSD = tanks.find((t: any) => t.tank_name === '2-HSD');
+
+            const dipMS = parseFloat(tank3MS?.manual_dip) || 0;
+            const dip1HSD = parseFloat(tank1HSD?.manual_dip) || 0;
+            const dip2HSD = parseFloat(tank2HSD?.manual_dip) || 0;
+            const msOpenStock = dipToLiters(dipMS);
+            const hsd1Vol = dipToLiters(dip1HSD);
+            const hsd2Vol = dipToLiters(dip2HSD);
+            const hsdOpenStock = hsd1Vol + hsd2Vol;
+
+            // Advance rolling baseline for next day
+            prevMeters = { ...prevMeters, ...currentMeters };
+
+            return {
+                date: day.date,
+                hasData: true,
+                // Petrol DIP
+                dipMS, msOpenStock, msReceipt: 0, msTotalStock: msOpenStock,
+                // Petrol DSR (S1 opening meters)
+                msD1: getOpen('Front-3'),
+                msD2: getOpen('Front-4'),
+                msD3: getOpen('Back-3'),
+                msD4: getOpen('Back-4'),
+                msTesting, msSaleVol, cumPetrol,
+                // Diesel DIP
+                dip1HSD, hsd1Vol, dip2HSD, hsd2Vol,
+                hsdOpenStock, hsdReceipt: 0, hsdTotalStock: hsdOpenStock,
+                // Diesel DSR (S1 opening meters)
+                hsdD1: getOpen('Front-1'),
+                hsdD2: getOpen('Front-2'),
+                hsdD3: getOpen('Back-1'),
+                hsdD4: getOpen('Back-2'),
+                hsdTesting, hsdSaleVol, cumDiesel,
+            };
+        });
+    }, [rawData, prevMonthMeters]);
+
+    const hasData = processedRows.some(d => d.hasData);
+    const monthLabel = format(parseISO(`${month}-01`), 'MMMM yyyy').toUpperCase();
+
+    const thBase = "py-2 px-2 text-center font-bold text-[10px] border border-slate-300 whitespace-nowrap";
+    const tdBase = "py-1.5 px-2 text-right text-xs border border-slate-200 font-mono";
+    const tdLabel = "py-1.5 px-2 text-xs border border-slate-200 font-bold text-slate-700";
 
     return (
-        <div className="max-w-7xl mx-auto space-y-6 pb-20">
-            <div className="flex items-center justify-between">
-                <h1 className="text-3xl font-black text-slate-800 m-0 flex items-center gap-3 tracking-tight">
-                    <span className="bg-blue-600 text-white p-2 rounded-xl shadow-md">
-                        <FileSpreadsheet size={24} />
-                    </span>
-                    {t('dsrReport', language)}
+        <div className="max-w-full mx-auto space-y-6 pb-20">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                <h1 className="text-2xl font-black text-slate-800 m-0 flex items-center gap-3 tracking-tight">
+                    <span className="bg-blue-600 text-white p-2 rounded-xl shadow-md"><FileSpreadsheet size={22} /></span>
+                    Monthly DSR Report
                 </h1>
-                <div className="flex items-center gap-4 bg-white p-2 rounded-2xl shadow-sm border border-slate-200">
-                    <div className="flex items-center gap-2 pl-2">
-                        <Calendar size={18} className="text-slate-400" />
-                        <input
-                            type="date"
-                            className="bg-transparent border-0 p-0 text-slate-700 font-bold focus:ring-0 cursor-pointer"
-                            value={date}
-                            onChange={(e) => setDate(e.target.value)}
-                        />
+                <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-4 py-2 rounded-xl">
+                        <Calendar size={16} className="text-slate-400" />
+                        <input type="month" className="bg-transparent border-0 p-0 text-slate-700 font-bold focus:ring-0 cursor-pointer"
+                            value={month} onChange={(e) => setMonth(e.target.value)} />
                     </div>
-                    <div className="w-px h-6 bg-slate-200"></div>
-                    <button
-                        onClick={() => generatePDF('dsr-receipt', `DSR_${date}`)}
-                        className="btn btn-primary shadow-lg shadow-blue-500/20 flex items-center gap-2 py-2 px-6 disabled:opacity-50"
-                        disabled={!dsrData}
-                    >
-                        <Download size={18} />
-                        Download PDF
+                    <button onClick={() => generatePDF('dsr-receipt', `DSR_${month}`)} disabled={!hasData}
+                        className="btn btn-primary shadow-lg shadow-blue-500/20 flex items-center gap-2 py-2 px-5 disabled:opacity-50">
+                        <Download size={16} /> PDF
                     </button>
                 </div>
             </div>
 
+
+
             {loading && (
-                <div className="card flex justify-center items-center py-32 rounded-3xl border border-slate-100 shadow-sm bg-white">
+                <div className="card flex justify-center items-center py-32 bg-white rounded-3xl border border-slate-100">
                     <Loader2 className="animate-spin text-blue-500" size={48} />
                 </div>
             )}
 
-            {!loading && !dsrData && (
-                <div className="card flex flex-col justify-center items-center gap-4 py-32 rounded-3xl border border-slate-100 shadow-sm bg-slate-50">
+            {!loading && !hasData && (
+                <div className="card flex flex-col justify-center items-center gap-4 py-32 rounded-3xl border border-slate-100 bg-slate-50">
                     <FileSpreadsheet size={48} className="text-slate-300" />
-                    <p className="text-slate-500 font-medium text-lg">No approved shifts found for {date}.</p>
+                    <p className="text-slate-500 font-medium text-lg">No approved shifts in {monthLabel}.</p>
                 </div>
             )}
 
-            {!loading && dsrData && (
-                <div id="dsr-receipt" className="space-y-8 print-section bg-white p-4 sm:p-6 md:p-12 rounded-[2rem] shadow-xl border border-slate-100 max-w-full overflow-hidden">
-
-                    {/* Brand Header */}
-                    <div className="text-center pb-8 border-b-2 border-slate-100 relative max-w-full overflow-hidden">
-                        <h2 className="text-xl sm:text-2xl md:text-4xl font-black text-slate-800 uppercase tracking-wide sm:tracking-widest md:tracking-[0.2em] break-words px-2">Maa Lakshmi Fuel Station</h2>
-                        <p className="text-slate-500 font-medium tracking-wide md:tracking-widest mt-2 uppercase text-xs md:text-sm">Official Daily Sales Report</p>
-                        <div className="inline-flex items-center align-center gap-2 md:gap-3 mt-4 md:mt-6 px-3 sm:px-4 md:px-6 py-2 md:py-2.5 bg-blue-50 text-blue-700 rounded-full font-bold border border-blue-100 shadow-sm text-xs sm:text-sm">
-                            <Calendar size={16} className="sm:w-[18px] sm:h-[18px]" />
-                            <span className="whitespace-nowrap">Report Date: {date}</span>
-                        </div>
+            {!loading && hasData && (
+                <div id="dsr-receipt" className="bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden">
+                    <div className="text-center py-6 border-b border-slate-200 bg-slate-50">
+                        <h2 className="text-2xl font-black text-slate-800 tracking-widest uppercase m-0">Maa Lakshmi Fuel Station</h2>
+                        <p className="text-slate-500 font-medium uppercase tracking-widest text-xs mt-1">Monthly Daily Sales Report — {monthLabel}</p>
                     </div>
 
-                    {/* Highly Detail Nozzle Grid */}
-                    <div className="max-w-full overflow-hidden">
-                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 px-2">
-                            <div className="flex items-center gap-3">
-                                <Fuel className="text-blue-500 flex-shrink-0" size={24} />
-                                <h3 className="text-lg sm:text-xl font-bold text-slate-800 m-0 tracking-tight">Meter Output Matrix</h3>
-                            </div>
-                            <span className="text-xs sm:text-sm font-medium text-slate-400 lg:hidden italic">← Swipe to view all →</span>
-                        </div>
-                        <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm -mx-4 sm:mx-0">
-                            <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-slate-100">
-                                <table className="w-full text-left text-sm min-w-[800px]">
-                                    <thead>
-                                        <tr className="bg-slate-800 text-slate-200 font-bold uppercase tracking-wider text-[10px]">
-                                            <th className="py-3 sm:py-4 px-2 sm:px-4 text-center border-b border-slate-700 sticky left-0 bg-slate-800 z-10">Machine</th>
-                                            <th className="py-3 sm:py-4 px-2 sm:px-4 border-b border-slate-700">Noz</th>
-                                            <th className="py-3 sm:py-4 px-2 sm:px-4 border-b border-slate-700">Prod</th>
-                                            <th className="py-3 sm:py-4 px-2 sm:px-4 text-right border-b border-slate-700">Open <span className="text-slate-400 font-normal lowercase hidden sm:inline">(S-1)</span></th>
-                                            <th className="py-3 sm:py-4 px-2 sm:px-4 text-right border-b border-r border-slate-700">Close <span className="text-slate-400 font-normal lowercase hidden sm:inline">(S-2)</span></th>
-                                            <th className="py-3 sm:py-4 px-2 sm:px-4 text-right border-b border-slate-700 text-amber-300">Test</th>
-                                            <th className="py-3 sm:py-4 px-2 sm:px-4 text-right border-b border-r border-slate-700 text-emerald-300">Sale Ltrs</th>
-                                            <th className="py-3 sm:py-4 px-2 sm:px-4 text-right border-b border-slate-700">Rate</th>
-                                            <th className="py-3 sm:py-4 px-2 sm:px-4 text-right border-b border-slate-700 text-blue-300">Amount</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100 text-slate-700 font-medium">
-                                        {dsrData.nozzles.map((n: NozzleRow, idx: number) => (
-                                            <tr key={`${n.machine}-${n.nozzleNo}`} className={`${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'} hover:bg-blue-50/30 transition-colors`}>
-                                                <td className="py-2 sm:py-3 px-2 sm:px-4 text-center sticky left-0 bg-inherit z-10">
-                                                    <span className={`px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-md text-[9px] sm:text-[10px] font-bold uppercase tracking-wider sm:tracking-widest ${n.machine === 'Front' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>{n.machine}</span>
-                                                </td>
-                                                <td className="py-2 sm:py-3 px-2 sm:px-4 font-bold text-slate-500 text-xs sm:text-sm">#{n.nozzleNo}</td>
-                                                <td className="py-2 sm:py-3 px-2 sm:px-4">
-                                                    <span className={`px-1.5 sm:px-2 py-0.5 rounded text-[10px] sm:text-xs font-bold ring-1 ring-inset ${n.product === 'HSD' ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200'}`}>{n.product}</span>
-                                                </td>
-                                                <td className="py-2 sm:py-3 px-2 sm:px-4 text-right font-mono text-xs sm:text-sm">{n.openingS1.toFixed(2)}</td>
-                                                <td className="py-2 sm:py-3 px-2 sm:px-4 text-right font-mono text-xs sm:text-sm font-bold border-r border-slate-100">{n.closingS2.toFixed(2)}</td>
-                                                <td className="py-2 sm:py-3 px-2 sm:px-4 text-right bg-amber-50/30 text-amber-700 font-mono text-xs sm:text-sm">{n.testingTotal > 0 ? n.testingTotal.toFixed(2) : '-'}</td>
-                                                <td className="py-2 sm:py-3 px-2 sm:px-4 text-right bg-emerald-50/30 text-emerald-700 font-mono text-xs sm:text-sm font-bold border-r border-slate-100">{n.saleVolTotal.toFixed(2)}</td>
-                                                <td className="py-2 sm:py-3 px-2 sm:px-4 text-right text-slate-500 font-mono text-[11px] sm:text-[13px]">₹{n.rate.toFixed(2)}</td>
-                                                <td className="py-2 sm:py-3 px-2 sm:px-4 text-right font-bold text-blue-700 font-mono text-xs sm:text-sm">₹{n.amountTotal.toFixed(2)}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
+                    {/* ======= PETROL SECTION ======= */}
+                    <div className="overflow-x-auto">
+                        <table className="w-full border-collapse text-xs" style={{ minWidth: '920px' }}>
+                            <thead>
+                                <tr>
+                                    <th className={`${thBase} bg-yellow-300 text-yellow-900`} rowSpan={2}>
+                                        {monthLabel.split(' ')[0]}<br /><span className="font-normal text-[9px]">Date</span>
+                                    </th>
+                                    <th className={`${thBase} bg-orange-300 text-orange-900`} colSpan={4}>Petrol DIP Readings</th>
+                                    <th className={`${thBase} bg-teal-300 text-teal-900`} colSpan={4}>
+                                        Petrol DSR Record <span className="font-normal text-[9px]">(S1 Opening Meter)</span>
+                                    </th>
+                                    <th className={`${thBase} bg-teal-300 text-teal-900`}>Testing</th>
+                                    <th className={`${thBase} bg-teal-200 text-teal-900`} colSpan={2}>Sales</th>
+                                </tr>
+                                <tr>
+                                    <th className={`${thBase} bg-orange-100 text-orange-800`}>DIP-MS (cm)</th>
+                                    <th className={`${thBase} bg-orange-100 text-orange-800`}>Opening Stock (L)</th>
+                                    <th className={`${thBase} bg-orange-100 text-orange-800`}>Receipt (L)</th>
+                                    <th className={`${thBase} bg-orange-100 text-orange-800`}>Total Stocks (L)</th>
+                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-1<br /><span className="font-normal text-[9px]">F-Noz 3</span></th>
+                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-2<br /><span className="font-normal text-[9px]">F-Noz 4</span></th>
+                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-3<br /><span className="font-normal text-[9px]">B-Noz 3</span></th>
+                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-4<br /><span className="font-normal text-[9px]">B-Noz 4</span></th>
+                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>Petrol (L)</th>
+                                    <th className={`${thBase} bg-teal-50 text-teal-900`}>Sales (L)</th>
+                                    <th className={`${thBase} bg-teal-50 text-teal-900`}>Cum. Sales (L)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {processedRows.map((row, idx) => (
+                                    <tr key={row.date}
+                                        className={`${row.hasData ? '' : 'text-slate-300'} ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'} hover:bg-orange-50/20 transition-colors`}>
+                                        <td className={`${tdLabel} text-center bg-slate-100`}>{format(parseISO(row.date), 'd/M/yy')}</td>
+                                        <td className={tdBase}>{row.hasData ? row.dipMS.toFixed(2) : ''}</td>
+                                        <td className={`${tdBase} text-emerald-700`}>{row.hasData ? row.msOpenStock.toLocaleString() : ''}</td>
+                                        <td className={tdBase}>{row.hasData ? row.msReceipt.toFixed(2) : ''}</td>
+                                        <td className={`${tdBase} font-bold`}>{row.hasData ? row.msTotalStock.toLocaleString() : ''}</td>
+                                        <td className={`${tdBase} bg-teal-50/40`}>{row.hasData && row.msD1 ? row.msD1.toFixed(2) : ''}</td>
+                                        <td className={`${tdBase} bg-teal-50/40`}>{row.hasData && row.msD2 ? row.msD2.toFixed(2) : ''}</td>
+                                        <td className={`${tdBase} bg-teal-50/40`}>{row.hasData && row.msD3 ? row.msD3.toFixed(2) : ''}</td>
+                                        <td className={`${tdBase} bg-teal-50/40`}>{row.hasData && row.msD4 ? row.msD4.toFixed(2) : ''}</td>
+                                        <td className={tdBase}>{row.hasData && row.msTesting ? row.msTesting.toFixed(2) : ''}</td>
+                                        <td className={`${tdBase} font-bold text-indigo-700`}>
+                                            {row.hasData ? row.msSaleVol.toFixed(2) : ''}
+                                        </td>
+                                        <td className={`${tdBase} font-bold text-blue-800 bg-blue-50/30`}>
+                                            {row.hasData ? row.cumPetrol.toFixed(2) : ''}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
 
-                        {/* Aggregate Section Grid */}
-                        <div className="flex flex-col lg:flex-row gap-6 lg:gap-8 mt-6">
-                            {/* Left: Product & Lube Sales Summary */}
-                            <div className="space-y-6 w-full lg:w-1/2">
-                                <div className="bg-slate-50 p-4 sm:p-6 rounded-2xl border border-slate-200">
-                                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><Droplet size={14} className="text-blue-500" /> Combined Sale Volumes</h3>
-                                    <div className="space-y-4">
-                                        <div className="flex justify-between items-end border-b border-slate-200 pb-3">
-                                            <div>
-                                                <div className="text-base sm:text-lg font-bold text-slate-700">MS (Petrol)</div>
-                                                <div className="text-xs sm:text-sm font-medium text-slate-500">{dsrData.agg.grandTotals.msVol.toFixed(2)} Ltrs</div>
-                                            </div>
-                                            <div className="text-lg sm:text-xl font-black text-slate-800 font-mono">₹{dsrData.agg.grandTotals.msAmt.toFixed(2)}</div>
-                                        </div>
-                                        <div className="flex justify-between items-end border-b border-slate-200 pb-3">
-                                            <div>
-                                                <div className="text-base sm:text-lg font-bold text-slate-700">HSD (Diesel)</div>
-                                                <div className="text-xs sm:text-sm font-medium text-slate-500">{dsrData.agg.grandTotals.hsdVol.toFixed(2)} Ltrs</div>
-                                            </div>
-                                            <div className="text-lg sm:text-xl font-black text-slate-800 font-mono">₹{dsrData.agg.grandTotals.hsdAmt.toFixed(2)}</div>
-                                        </div>
-                                        <div className="flex justify-between items-end pt-2">
-                                            <div>
-                                                <div className="text-base sm:text-lg font-bold text-slate-700">Lube Sales</div>
-                                                <div className="text-xs sm:text-sm font-medium text-amber-600">Additional Goods</div>
-                                            </div>
-                                            <div className="text-lg sm:text-xl font-black text-amber-600 font-mono">₹{dsrData.agg.lubeTotal.toFixed(2)}</div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
+                    <div className="h-4 bg-slate-100 border-y border-slate-200" />
 
-                            {/* Right: Financial Reconciliation */}
-                            <div className="space-y-6 w-full lg:w-1/2">
-                                <div className="bg-slate-800 p-6 sm:p-8 rounded-2xl shadow-xl border border-slate-700 text-white relative">
-                                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-6 flex items-center gap-2"><Calculator size={14} className="text-emerald-400" /> Sales Reconciliation</h3>
-
-                                    <div className="space-y-4 relative z-10">
-                                        <div className="flex justify-between items-center bg-white/5 p-3 sm:p-4 rounded-xl border border-white/10">
-                                            <span className="text-slate-300 font-medium tracking-wide text-sm sm:text-base">Expected Total Sales</span>
-                                            <span className="text-xl sm:text-2xl font-black font-mono">₹{dsrData.agg.totalSale.toFixed(2)}</span>
-                                        </div>
-
-                                        <div className="flex justify-between items-center p-2 px-3 sm:px-4">
-                                            <span className="text-emerald-300 font-medium tracking-wide text-xs sm:text-sm">+ Total Cash Handed</span>
-                                            <span className="text-lg sm:text-xl font-bold font-mono text-emerald-400 drop-shadow-sm">₹{dsrData.agg.cash.total.toFixed(2)}</span>
-                                        </div>
-
-                                        <div className="flex justify-between items-center p-2 px-3 sm:px-4 border-b border-white/10 pb-6">
-                                            <span className="text-indigo-300 font-medium tracking-wide text-xs sm:text-sm">+ Total Digital Handed</span>
-                                            <span className="text-lg sm:text-xl font-bold font-mono text-indigo-400 drop-shadow-sm">₹{dsrData.agg.online.total.toFixed(2)}</span>
-                                        </div>
-
-                                        <div className="flex justify-between items-center pt-2 px-2">
-                                            <span className="text-slate-400 font-bold uppercase tracking-widest text-xs">Total Collected</span>
-                                            <span className="text-base sm:text-lg font-bold font-mono text-slate-300">₹{(dsrData.agg.cash.total + dsrData.agg.online.total).toFixed(2)}</span>
-                                        </div>
-
-                                        <div className={`mt-6 p-4 sm:p-5 rounded-xl border flex justify-between items-center ${((dsrData.agg.cash.total + dsrData.agg.online.total) - dsrData.agg.totalSale) < 0 ? 'bg-red-500/20 border-red-500/30 text-rose-300' : 'bg-green-500/20 border-green-500/30 text-emerald-300'}`}>
-                                            <span className="font-bold uppercase tracking-widest text-xs sm:text-sm">Net Balance</span>
-                                            <span className="text-2xl sm:text-3xl font-black font-mono">
-                                                {((dsrData.agg.cash.total + dsrData.agg.online.total) - dsrData.agg.totalSale) > 0 ? '+' : ''}
-                                                ₹{((dsrData.agg.cash.total + dsrData.agg.online.total) - dsrData.agg.totalSale).toFixed(2)}
-                                            </span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Signature Block */}
-                        <div className="pt-12 sm:pt-20 pb-8 flex flex-col sm:flex-row justify-between items-center sm:items-end gap-8 border-t border-slate-200 mt-12">
-                            <div className="text-center">
-                                <div className="w-40 sm:w-48 border-b-2 border-slate-800 mb-2"></div>
-                                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Manager Signature</span>
-                            </div>
-                            <div className="text-center">
-                                <div className="w-40 sm:w-48 border-b-2 border-slate-800 mb-2"></div>
-                                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Admin Signature</span>
-                            </div>
-                        </div>
-
+                    {/* ======= DIESEL SECTION ======= */}
+                    <div className="overflow-x-auto">
+                        <table className="w-full border-collapse text-xs" style={{ minWidth: '1100px' }}>
+                            <thead>
+                                <tr>
+                                    <th className={`${thBase} bg-slate-200 text-slate-700`} rowSpan={2}>Date</th>
+                                    <th className={`${thBase} bg-orange-300 text-orange-900`} colSpan={7}>Diesel Dip Readings</th>
+                                    <th className={`${thBase} bg-teal-300 text-teal-900`} colSpan={4}>
+                                        Diesel DSR Record <span className="font-normal text-[9px]">(S1 Opening Meter)</span>
+                                    </th>
+                                    <th className={`${thBase} bg-teal-300 text-teal-900`}>Testing</th>
+                                    <th className={`${thBase} bg-teal-200 text-teal-900`} colSpan={2}>Sales</th>
+                                </tr>
+                                <tr>
+                                    <th className={`${thBase} bg-orange-100 text-orange-800`}>HSD-1 (cm)</th>
+                                    <th className={`${thBase} bg-orange-100 text-orange-800`}>Volume (L)</th>
+                                    <th className={`${thBase} bg-orange-100 text-orange-800`}>HSD-2 (cm)</th>
+                                    <th className={`${thBase} bg-orange-100 text-orange-800`}>Volume (L)</th>
+                                    <th className={`${thBase} bg-orange-100 text-orange-800`}>Opening Stock (L)</th>
+                                    <th className={`${thBase} bg-orange-100 text-orange-800`}>Receipt (L)</th>
+                                    <th className={`${thBase} bg-orange-100 text-orange-800`}>Total Stocks (L)</th>
+                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-1<br /><span className="font-normal text-[9px]">F-Noz 1</span></th>
+                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-2<br /><span className="font-normal text-[9px]">F-Noz 2</span></th>
+                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-3<br /><span className="font-normal text-[9px]">B-Noz 1</span></th>
+                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-4<br /><span className="font-normal text-[9px]">B-Noz 2</span></th>
+                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>Diesel (L)</th>
+                                    <th className={`${thBase} bg-teal-50 text-teal-900`}>Sales (L)</th>
+                                    <th className={`${thBase} bg-teal-50 text-teal-900`}>Cum. Sales (L)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {processedRows.map((row, idx) => (
+                                    <tr key={row.date}
+                                        className={`${row.hasData ? '' : 'text-slate-300'} ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'} hover:bg-amber-50/20 transition-colors`}>
+                                        <td className={`${tdLabel} text-center bg-slate-100`}>{format(parseISO(row.date), 'd/M/yy')}</td>
+                                        <td className={tdBase}>{row.hasData ? row.dip1HSD.toFixed(2) : ''}</td>
+                                        <td className={`${tdBase} text-emerald-700`}>{row.hasData ? row.hsd1Vol.toLocaleString() : ''}</td>
+                                        <td className={tdBase}>{row.hasData ? row.dip2HSD.toFixed(2) : ''}</td>
+                                        <td className={`${tdBase} text-emerald-700`}>{row.hasData ? row.hsd2Vol.toLocaleString() : ''}</td>
+                                        <td className={`${tdBase} font-semibold`}>{row.hasData ? row.hsdOpenStock.toLocaleString() : ''}</td>
+                                        <td className={tdBase}>{row.hasData ? row.hsdReceipt.toFixed(2) : ''}</td>
+                                        <td className={`${tdBase} font-bold`}>{row.hasData ? row.hsdTotalStock.toLocaleString() : ''}</td>
+                                        <td className={`${tdBase} bg-teal-50/40`}>{row.hasData && row.hsdD1 ? row.hsdD1.toFixed(2) : ''}</td>
+                                        <td className={`${tdBase} bg-teal-50/40`}>{row.hasData && row.hsdD2 ? row.hsdD2.toFixed(2) : ''}</td>
+                                        <td className={`${tdBase} bg-teal-50/40`}>{row.hasData && row.hsdD3 ? row.hsdD3.toFixed(2) : ''}</td>
+                                        <td className={`${tdBase} bg-teal-50/40`}>{row.hasData && row.hsdD4 ? row.hsdD4.toFixed(2) : ''}</td>
+                                        <td className={tdBase}>{row.hasData && row.hsdTesting ? row.hsdTesting.toFixed(2) : ''}</td>
+                                        <td className={`${tdBase} font-bold text-amber-700`}>
+                                            {row.hasData ? row.hsdSaleVol.toFixed(2) : ''}
+                                        </td>
+                                        <td className={`${tdBase} font-bold text-orange-800 bg-orange-50/30`}>
+                                            {row.hasData ? row.cumDiesel.toFixed(2) : ''}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             )}

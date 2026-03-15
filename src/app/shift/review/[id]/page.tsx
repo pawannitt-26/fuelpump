@@ -123,7 +123,7 @@ export default function ShiftReview({ params }: { params: Promise<{ id: string }
         <div className="max-w-4xl mx-auto space-y-6 pb-20">
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
-                    <Link href="/dashboard/manager" className="text-slate-500 hover:text-blue-600 transition-colors">
+                    <Link href="/dashboard/admin" className="text-slate-500 hover:text-blue-600 transition-colors">
                         <MoveLeft size={24} />
                     </Link>
                     <h1 className="text-2xl font-bold text-slate-800 m-0">Shift Review</h1>
@@ -149,7 +149,7 @@ export default function ShiftReview({ params }: { params: Promise<{ id: string }
                 <div className="border-b pb-6 mb-6">
                     <div className="flex justify-between items-start">
                         <div>
-                            <h2 className="text-xl font-bold text-slate-800 uppercase tracking-wide">Fuel Station XYZ</h2>
+                            <h2 className="text-xl font-bold text-slate-800 uppercase tracking-wide">Maa Lakshmi Fuel Station</h2>
                             <p className="text-slate-500 mt-1 flex gap-4">
                                 <span>{t('date', language)}: <strong>{shiftData.shift_date}</strong></span>
                                 <span>{t('shift', language)}: <strong>{shiftData.shift_number}</strong></span>

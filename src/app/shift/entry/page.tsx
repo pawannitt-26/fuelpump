@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useAppStore } from '@/store/appStore';
 import { t } from '@/lib/i18n';
-import { Save, MoveLeft, Loader2, UserRound, Banknote, CreditCard, Calculator } from 'lucide-react';
+import { Save, MoveLeft, Loader2, UserRound, Banknote, CreditCard, Calculator, Gauge, AlertTriangle, FlaskConical } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
@@ -29,6 +29,13 @@ interface SideEntry {
     nozzleMan: string;
     cash: number;
     online: number;
+    ghatti: number;
+}
+
+interface TankDip {
+    tankName: string;
+    manualDip: number;
+    autoDip: number;
 }
 
 function ShiftEntryContent() {
@@ -51,16 +58,26 @@ function ShiftEntryContent() {
 
     // Manage state for the 4 sides
     const [sides, setSides] = useState<SideEntry[]>([
-        { id: 'Front-A', machine: 'Front', side: 'A', label: '1 & 3', nozzleMan: '', cash: 0, online: 0 },
-        { id: 'Front-B', machine: 'Front', side: 'B', label: '2 & 4', nozzleMan: '', cash: 0, online: 0 },
-        { id: 'Back-A', machine: 'Back', side: 'A', label: '1 & 3', nozzleMan: '', cash: 0, online: 0 },
-        { id: 'Back-B', machine: 'Back', side: 'B', label: '2 & 4', nozzleMan: '', cash: 0, online: 0 },
+        { id: 'Front-A', machine: 'Front', side: 'A', label: '1 & 3', nozzleMan: '', cash: 0, online: 0, ghatti: 0 },
+        { id: 'Front-B', machine: 'Front', side: 'B', label: '2 & 4', nozzleMan: '', cash: 0, online: 0, ghatti: 0 },
+        { id: 'Back-A', machine: 'Back', side: 'A', label: '1 & 3', nozzleMan: '', cash: 0, online: 0, ghatti: 0 },
+        { id: 'Back-B', machine: 'Back', side: 'B', label: '2 & 4', nozzleMan: '', cash: 0, online: 0, ghatti: 0 },
     ]);
 
     // Dedicated state for Lube Sales
     const [lubeState, setLubeState] = useState({ total: 0, cash: 0, online: 0 });
 
-    // Fetch Products and their active rates
+    // Tank Dip Readings State
+    const [tankDips, setTankDips] = useState<TankDip[]>([
+        { tankName: '1-HSD', manualDip: 0, autoDip: 0 },
+        { tankName: '2-HSD', manualDip: 0, autoDip: 0 },
+        { tankName: '3-MS', manualDip: 0, autoDip: 0 },
+    ]);
+    const updateTankDip = (tankName: string, field: 'manualDip' | 'autoDip', value: number) => {
+        setTankDips(prev => prev.map(t => t.tankName === tankName ? { ...t, [field]: value } : t));
+    };
+
+    // Fetch Products, Rates & Auto-Fill Meters from Previous Shift
     useEffect(() => {
         async function fetchProductsAndRates() {
             setLoading(true);
@@ -93,7 +110,8 @@ function ShiftEntryContent() {
                             .select(`
                                 *,
                                 shift_entries(*, products(name)),
-                                shift_sides(*)
+                                shift_sides(*),
+                                shift_tanks(*)
                             `)
                             .eq('id', editId)
                             .single();
@@ -125,7 +143,8 @@ function ShiftEntryContent() {
                                     label: s.side,
                                     nozzleMan: s.nozzle_man,
                                     cash: parseFloat(s.cash_received) || 0,
-                                    online: parseFloat(s.online_received) || 0
+                                    online: parseFloat(s.online_received) || 0,
+                                    ghatti: parseFloat(s.ghatti) || 0
                                 }));
                                 setSides(loadedSides);
 
@@ -138,20 +157,43 @@ function ShiftEntryContent() {
                                     });
                                 }
                             }
+                            if (existingShift.shift_tanks && existingShift.shift_tanks.length > 0) {
+                                setTankDips(existingShift.shift_tanks.map((t: any) => ({
+                                    tankName: t.tank_name,
+                                    manualDip: parseFloat(t.manual_dip) || 0,
+                                    autoDip: parseFloat(t.auto_dip) || 0
+                                })));
+                            }
                         }
                         return; // Skip setting default zero entries
                     }
 
-                    // Default Initial State for New Shift
+                    // --- NEW SHIFT: Auto-fill opening meters from previous shift's closing meters ---
+                    const { data: previousShiftEntries } = await supabase
+                        .from('shift_entries')
+                        .select('nozzle_no, closing_meter, shifts!inner(shift_date, shift_number)')
+                        .order('shifts(shift_date)', { ascending: false })
+                        .order('shifts(shift_number)', { ascending: false })
+                        .limit(8);
+
+                    // Build a map from nozzle_no -> closing_meter
+                    const prevClosingMap: Record<string, number> = {};
+                    if (previousShiftEntries) {
+                        previousShiftEntries.forEach((e: any) => {
+                            prevClosingMap[e.nozzle_no] = parseFloat(e.closing_meter) || 0;
+                        });
+                    }
+
+                    // Default Initial State for New Shift, auto-filling opening from previous closing
                     setEntries([
-                        { id: 'F1', machine: 'Front', side: 'A', product: 'HSD', product_id: rateMap['HSD'].id, nozzleNo: '1', opening: 0, closing: 0, testing: 0, rate: rateMap['HSD'].rate },
-                        { id: 'F3', machine: 'Front', side: 'A', product: 'MS', product_id: rateMap['MS'].id, nozzleNo: '3', opening: 0, closing: 0, testing: 0, rate: rateMap['MS'].rate },
-                        { id: 'F2', machine: 'Front', side: 'B', product: 'HSD', product_id: rateMap['HSD'].id, nozzleNo: '2', opening: 0, closing: 0, testing: 0, rate: rateMap['HSD'].rate },
-                        { id: 'F4', machine: 'Front', side: 'B', product: 'MS', product_id: rateMap['MS'].id, nozzleNo: '4', opening: 0, closing: 0, testing: 0, rate: rateMap['MS'].rate },
-                        { id: 'B1', machine: 'Back', side: 'A', product: 'HSD', product_id: rateMap['HSD'].id, nozzleNo: '1', opening: 0, closing: 0, testing: 0, rate: rateMap['HSD'].rate },
-                        { id: 'B3', machine: 'Back', side: 'A', product: 'MS', product_id: rateMap['MS'].id, nozzleNo: '3', opening: 0, closing: 0, testing: 0, rate: rateMap['MS'].rate },
-                        { id: 'B2', machine: 'Back', side: 'B', product: 'HSD', product_id: rateMap['HSD'].id, nozzleNo: '2', opening: 0, closing: 0, testing: 0, rate: rateMap['HSD'].rate },
-                        { id: 'B4', machine: 'Back', side: 'B', product: 'MS', product_id: rateMap['MS'].id, nozzleNo: '4', opening: 0, closing: 0, testing: 0, rate: rateMap['MS'].rate },
+                        { id: 'F1', machine: 'Front', side: 'A', product: 'HSD', product_id: rateMap['HSD'].id, nozzleNo: '1', opening: prevClosingMap['Front-1'] || 0, closing: 0, testing: 0, rate: rateMap['HSD'].rate },
+                        { id: 'F3', machine: 'Front', side: 'A', product: 'MS', product_id: rateMap['MS'].id, nozzleNo: '3', opening: prevClosingMap['Front-3'] || 0, closing: 0, testing: 0, rate: rateMap['MS'].rate },
+                        { id: 'F2', machine: 'Front', side: 'B', product: 'HSD', product_id: rateMap['HSD'].id, nozzleNo: '2', opening: prevClosingMap['Front-2'] || 0, closing: 0, testing: 0, rate: rateMap['HSD'].rate },
+                        { id: 'F4', machine: 'Front', side: 'B', product: 'MS', product_id: rateMap['MS'].id, nozzleNo: '4', opening: prevClosingMap['Front-4'] || 0, closing: 0, testing: 0, rate: rateMap['MS'].rate },
+                        { id: 'B1', machine: 'Back', side: 'A', product: 'HSD', product_id: rateMap['HSD'].id, nozzleNo: '1', opening: prevClosingMap['Back-1'] || 0, closing: 0, testing: 0, rate: rateMap['HSD'].rate },
+                        { id: 'B3', machine: 'Back', side: 'A', product: 'MS', product_id: rateMap['MS'].id, nozzleNo: '3', opening: prevClosingMap['Back-3'] || 0, closing: 0, testing: 0, rate: rateMap['MS'].rate },
+                        { id: 'B2', machine: 'Back', side: 'B', product: 'HSD', product_id: rateMap['HSD'].id, nozzleNo: '2', opening: prevClosingMap['Back-2'] || 0, closing: 0, testing: 0, rate: rateMap['HSD'].rate },
+                        { id: 'B4', machine: 'Back', side: 'B', product: 'MS', product_id: rateMap['MS'].id, nozzleNo: '4', opening: prevClosingMap['Back-4'] || 0, closing: 0, testing: 0, rate: rateMap['MS'].rate },
                     ]);
 
                 }
@@ -222,6 +264,9 @@ function ShiftEntryContent() {
     const globalDiff = (totalCashGlobal + totalOnlineGlobal) - grandTotals.amount;
     const hasGlobalMismatch = Math.abs(globalDiff) > 5;
 
+    // Total Ghatti across all sides
+    const totalGhatti = sides.reduce((sum, s) => sum + (s.ghatti || 0), 0);
+
     const handleSubmit = async () => {
         if (!user) return alert('Session lost');
         setLoading(true);
@@ -275,7 +320,7 @@ function ShiftEntryContent() {
             const { error: entriesError } = await supabase.from('shift_entries').insert(entryInserts);
             if (entriesError) throw entriesError;
 
-            // 3. Insert Sides Data
+            // 3. Insert Sides Data (with ghatti)
             const sidesInserts = sides.map(s => ({
                 shift_id: shiftId,
                 machine: s.machine,
@@ -283,7 +328,8 @@ function ShiftEntryContent() {
                 nozzle_man: s.nozzleMan || 'Unassigned',
                 cash_received: s.cash || 0,
                 online_received: s.online || 0,
-                lube_sales: 0
+                lube_sales: 0,
+                ghatti: s.ghatti || 0
             }));
 
             // Push dedicated Lube sales record
@@ -294,12 +340,24 @@ function ShiftEntryContent() {
                 nozzle_man: 'Manager',
                 cash_received: lubeState.cash || 0,
                 online_received: lubeState.online || 0,
-                lube_sales: lubeState.total || 0
+                lube_sales: lubeState.total || 0,
+                ghatti: 0
             });
 
-            // Note: This will fail if add_shift_sides.sql was not run by the user yet
             const { error: sidesError } = await supabase.from('shift_sides').insert(sidesInserts);
             if (sidesError) throw sidesError;
+
+            // 3b. Delete previous tank dips if editing, then insert new ones
+            if (editId) await supabase.from('shift_tanks').delete().eq('shift_id', shiftId);
+            const { error: tanksError } = await supabase.from('shift_tanks').insert(
+                tankDips.map(td => ({
+                    shift_id: shiftId,
+                    tank_name: td.tankName,
+                    manual_dip: td.manualDip || 0,
+                    auto_dip: td.autoDip || 0
+                }))
+            );
+            if (tanksError) console.warn('Tank dips save failed (non-critical):', tanksError);
 
             // 4. Create Shift Summary (Aggregate)
             const { error: summaryError } = await supabase.from('shift_summaries').insert([{
@@ -484,7 +542,7 @@ function ShiftEntryContent() {
                                             </div>
                                         </div>
 
-                                        {/* Right: Cash & Online Collections */}
+                                        {/* Right: Cash, Online & Ghatti Collections */}
                                         <div className="xl:w-1/4 flex flex-col gap-3">
                                             <div className="bg-white p-3 rounded-2xl border-2 border-slate-100 shadow-sm relative overflow-hidden group">
                                                 <div className="absolute top-0 right-0 w-16 h-16 bg-emerald-50 rounded-bl-full -z-10 group-focus-within:scale-150 transition-transform"></div>
@@ -511,6 +569,20 @@ function ShiftEntryContent() {
                                                         className="w-full bg-transparent border-0 p-0 text-xl font-bold text-indigo-700 focus:ring-0 placeholder:text-slate-200"
                                                         value={sideState?.online || ''}
                                                         onChange={(e) => updateSide(sideState!.id, 'online', parseFloat(e.target.value) || 0)}
+                                                    />
+                                                </div>
+                                            </div>
+                                            {/* Ghatti (Shortage) */}
+                                            <div className="bg-red-50/80 p-3 rounded-2xl border-2 border-red-100 shadow-sm relative overflow-hidden group">
+                                                <label className="text-[11px] font-bold text-red-400 uppercase mb-1.5 flex items-center gap-1.5"><AlertTriangle size={14} className="text-red-400" /> Ghatti (Shortage)</label>
+                                                <div className="flex items-center">
+                                                    <span className="text-red-300 font-medium text-lg mr-2">₹</span>
+                                                    <input
+                                                        type="number"
+                                                        placeholder="0.00"
+                                                        className="w-full bg-transparent border-0 p-0 text-xl font-bold text-red-600 focus:ring-0 placeholder:text-red-200"
+                                                        value={sideState?.ghatti || ''}
+                                                        onChange={(e) => updateSide(sideState!.id, 'ghatti', parseFloat(e.target.value) || 0)}
                                                     />
                                                 </div>
                                             </div>
@@ -624,6 +696,72 @@ function ShiftEntryContent() {
                 </div>
             </div>
 
+            {/* Tank Dip Readings Card */}
+            <div className="card w-full mb-8 relative border-2 border-teal-100 shadow-lg shadow-teal-500/5 bg-gradient-to-br from-teal-50/50 to-white overflow-hidden rounded-[2rem]">
+                <div className="absolute top-0 right-0 w-64 h-64 bg-teal-400 rounded-full blur-[100px] opacity-10 pointer-events-none"></div>
+                <div className="flex items-center gap-4 border-b border-teal-100 pb-5 mb-6 relative z-10">
+                    <div className="w-12 h-12 bg-teal-100 rounded-2xl flex items-center justify-center shadow-inner">
+                        <Gauge size={24} className="text-teal-600" />
+                    </div>
+                    <div>
+                        <h3 className="text-xl font-black text-slate-800 tracking-tight m-0">Tank Dip Readings</h3>
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Manual &amp; Auto Measurement per Tank</p>
+                    </div>
+                </div>
+
+                <div className="relative z-10 overflow-x-auto">
+                    <table className="w-full text-left min-w-[480px]">
+                        <thead>
+                            <tr className="bg-teal-50/60 text-slate-400 text-[10px] uppercase font-bold tracking-widest border-b border-teal-100">
+                                <th className="py-3 px-5 text-left">Tank</th>
+                                <th className="py-3 px-5">Product</th>
+                                <th className="py-3 px-5"><FlaskConical size={12} className="inline mr-1" />Manual Dip (cm)</th>
+                                <th className="py-3 px-5"><Gauge size={12} className="inline mr-1" />Auto Dip (cm)</th>
+                                <th className="py-3 px-5 text-right">Difference</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-teal-100/60">
+                            {tankDips.map((td, i) => {
+                                const diff = td.autoDip - td.manualDip;
+                                return (
+                                    <tr key={td.tankName} className={`${i % 2 === 0 ? 'bg-white' : 'bg-teal-50/20'} hover:bg-teal-50/40 transition-colors`}>
+                                        <td className="py-3 px-5">
+                                            <span className="font-black text-slate-700 text-base">{td.tankName.split('-')[0]}</span>
+                                        </td>
+                                        <td className="py-3 px-5">
+                                            <span className={`px-2.5 py-1 rounded-md text-xs font-bold ring-1 ring-inset ${td.tankName.endsWith('HSD') ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200'}`}>
+                                                {td.tankName.endsWith('HSD') ? 'HSD' : 'MS'}
+                                            </span>
+                                        </td>
+                                        <td className="py-2 px-5">
+                                            <input
+                                                type="number"
+                                                placeholder="0"
+                                                className="w-full py-2 px-3 bg-slate-100/80 rounded-lg text-slate-700 font-semibold focus:bg-white focus:ring-2 focus:ring-teal-400 focus:outline-none transition-all placeholder:text-slate-300"
+                                                value={td.manualDip === 0 ? '' : td.manualDip}
+                                                onChange={(e) => updateTankDip(td.tankName, 'manualDip', parseFloat(e.target.value) || 0)}
+                                            />
+                                        </td>
+                                        <td className="py-2 px-5">
+                                            <input
+                                                type="number"
+                                                placeholder="0"
+                                                className="w-full py-2 px-3 bg-slate-100/80 rounded-lg text-slate-700 font-semibold focus:bg-white focus:ring-2 focus:ring-teal-400 focus:outline-none transition-all placeholder:text-slate-300"
+                                                value={td.autoDip === 0 ? '' : td.autoDip}
+                                                onChange={(e) => updateTankDip(td.tankName, 'autoDip', parseFloat(e.target.value) || 0)}
+                                            />
+                                        </td>
+                                        <td className={`py-3 px-5 text-right font-bold ${Math.abs(diff) > 1 ? (diff < 0 ? 'text-red-500' : 'text-emerald-600') : 'text-slate-400'}`}>
+                                            {diff !== 0 ? `${diff > 0 ? '+' : ''}${diff.toFixed(1)} cm` : '-'}
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
             {/* Grand Global Summary Context */}
             <div className="card relative overflow-hidden bg-gradient-to-r from-blue-950 via-slate-900 to-slate-950 text-white shadow-2xl shadow-blue-900/40 border-none px-6 py-8 md:p-10 rounded-3xl group">
                 {/* Background Decor */}
@@ -659,6 +797,12 @@ function ShiftEntryContent() {
                                 <div className="text-[10px] text-amber-300/80 font-bold uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><Banknote size={12} /> Total Lube</div>
                                 <div className="text-2xl font-black text-amber-400 tracking-tight">₹{grandTotals.lube.toFixed(2)}</div>
                             </div>
+
+                            {totalGhatti > 0 && <div className="w-px h-16 bg-white/10 hidden md:block"></div>}
+                            {totalGhatti > 0 && <div>
+                                <div className="text-[10px] text-red-300/80 font-bold uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><AlertTriangle size={12} /> Total Ghatti</div>
+                                <div className="text-2xl font-black text-red-400 tracking-tight">₹{totalGhatti.toFixed(2)}</div>
+                            </div>}
 
                             <div>
                                 <div className="text-[10px] text-emerald-300/80 font-bold uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><Banknote size={12} /> Handed Cash</div>
