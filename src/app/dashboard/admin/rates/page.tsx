@@ -114,51 +114,49 @@ export default function RatesManagement() {
     );
 
     return (
-        <div className="max-w-5xl mx-auto space-y-8 pb-20">
-            <div className="flex items-center justify-between border-b pb-6 border-slate-200">
+        <div className="max-w-5xl mx-auto space-y-5 sm:space-y-8 pb-20">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b pb-4 sm:pb-6 border-slate-200 gap-3">
                 <div>
-                    <h1 className="text-3xl font-extrabold text-slate-800 m-0 flex items-center gap-3 tracking-tight">
-                        <IndianRupee className="text-blue-600 bg-blue-50 p-1.5 rounded-lg" size={36} />
+                    <h1 className="text-xl sm:text-3xl font-extrabold text-slate-800 m-0 flex items-center gap-2 sm:gap-3 tracking-tight">
+                        <IndianRupee className="text-blue-600 bg-blue-50 p-1 sm:p-1.5 rounded-lg" size={28} />
                         {t('updateRates', language)}
                     </h1>
-                    <p className="text-slate-500 mt-2 font-medium">Manage and set active daily prices for fuel products.</p>
+                    <p className="text-slate-500 mt-1 sm:mt-2 font-medium text-sm">Manage daily fuel prices.</p>
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-8">
                 {products.map(product => {
                     const hasChanged = parseFloat(newRates[product.id]) !== parseFloat(product.currentRate) && !isNaN(parseFloat(newRates[product.id]));
 
                     return (
-                        <div key={product.id} className="card relative overflow-hidden bg-white shadow-xl shadow-slate-200/50 border border-slate-100 hover:shadow-2xl hover:-translate-y-1 transition-all duration-300">
-                            {/* Decorative Top Accent */}
+                        <div key={product.id} className="card relative overflow-hidden bg-white shadow-xl shadow-slate-200/50 border border-slate-100">
                             <div className={`absolute top-0 left-0 right-0 h-1.5 ${product.name === 'HSD' ? 'bg-amber-400' : 'bg-green-500'}`} />
-
-                            <div className="p-8">
-                                <div className="flex justify-between items-start mb-8">
+                            <div className="p-4 sm:p-8">
+                                <div className="flex justify-between items-start mb-4 sm:mb-8">
                                     <div>
-                                        <div className={`inline-block px-3 py-1 rounded-full text-xs font-bold mb-2 uppercase tracking-widest ${product.name === 'HSD' ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}`}>
-                                            Active Product
+                                        <div className={`inline-block px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-[10px] sm:text-xs font-bold mb-1.5 sm:mb-2 uppercase tracking-widest ${product.name === 'HSD' ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}`}>
+                                            Active
                                         </div>
-                                        <h2 className="text-3xl font-extrabold text-slate-800">{product.name}</h2>
+                                        <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-800">{product.name}</h2>
                                     </div>
-                                    <div className="text-right bg-slate-50 px-4 py-2 rounded-xl border border-slate-100">
-                                        <span className="text-xs text-slate-400 uppercase font-bold block mb-1">Current Base</span>
-                                        <span className="text-2xl font-bold text-slate-700">₹{parseFloat(product.currentRate).toFixed(2)}</span>
+                                    <div className="text-right bg-slate-50 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg sm:rounded-xl border border-slate-100">
+                                        <span className="text-[10px] sm:text-xs text-slate-400 uppercase font-bold block mb-0.5">Current</span>
+                                        <span className="text-lg sm:text-2xl font-bold text-slate-700">₹{parseFloat(product.currentRate).toFixed(2)}</span>
                                     </div>
                                 </div>
 
-                                <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 relative">
-                                    <label className="text-sm text-blue-600 uppercase font-bold mb-3 flex items-center gap-2">
-                                        Set New Configuration <ArrowRight size={14} />
+                                <div className="bg-slate-50 p-4 sm:p-6 rounded-xl sm:rounded-2xl border border-slate-100 relative">
+                                    <label className="text-xs sm:text-sm text-blue-600 uppercase font-bold mb-2 sm:mb-3 flex items-center gap-2">
+                                        Set New Rate <ArrowRight size={14} />
                                     </label>
-
                                     <div className="relative flex items-center">
-                                        <span className="absolute left-4 text-slate-400 font-medium text-lg">₹</span>
+                                        <span className="absolute left-3 sm:left-4 text-slate-400 font-medium text-lg">₹</span>
                                         <input
                                             type="number"
                                             step="0.01"
-                                            className="w-full bg-white border-2 border-slate-200 rounded-xl pl-10 pr-4 py-4 text-2xl font-bold text-slate-800 focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all placeholder:text-slate-300"
+                                            inputMode="decimal"
+                                            className="w-full bg-white border-2 border-slate-200 rounded-lg sm:rounded-xl pl-8 sm:pl-10 pr-3 sm:pr-4 py-3 sm:py-4 text-xl sm:text-2xl font-bold text-slate-800 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition-all placeholder:text-slate-300"
                                             placeholder="0.00"
                                             value={newRates[product.id] || ''}
                                             onChange={(e) => setNewRates({ ...newRates, [product.id]: e.target.value })}
@@ -166,13 +164,13 @@ export default function RatesManagement() {
                                     </div>
                                 </div>
 
-                                <div className="mt-8 flex justify-center items-end">
+                                <div className="mt-4 sm:mt-8 flex justify-center items-end">
                                     <button
                                         onClick={() => handleSave(product.id)}
                                         disabled={saving || !hasChanged}
-                                        className={`btn py-3 px-8 text-base font-bold shadow-lg flex items-center  gap-2 transition-all ${hasChanged
-                                            ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-blue-500/30 hover:shadow-blue-500/50 hover:-translate-y-0.5'
-                                            : 'bg-slate-100 text-slate-400 shadow-none hover:translate-y-0'
+                                        className={`btn w-full sm:w-auto py-3 px-6 sm:px-8 text-base font-bold shadow-lg flex items-center justify-center gap-2 transition-all ${hasChanged
+                                            ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-blue-500/30'
+                                            : 'bg-slate-100 text-slate-400 shadow-none'
                                             } disabled:opacity-60 disabled:cursor-not-allowed`}
                                     >
                                         {saving ? <Loader2 size={20} className="animate-spin" /> : <Save size={20} />}

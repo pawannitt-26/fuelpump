@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useAppStore } from '@/store/appStore';
 import { t } from '@/lib/i18n';
-import { Save, MoveLeft, Loader2, UserRound, Banknote, CreditCard, Calculator, Gauge, AlertTriangle, FlaskConical } from 'lucide-react';
+import { Save, MoveLeft, Loader2, UserRound, Banknote, CreditCard, Calculator, Gauge, AlertTriangle, FlaskConical, Vault, Truck } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
@@ -27,6 +27,7 @@ interface SideEntry {
     side: 'A' | 'B';
     label: string;
     nozzleMan: string;
+    employeeId?: string;
     cash: number;
     online: number;
     ghatti: number;
@@ -36,6 +37,11 @@ interface TankDip {
     tankName: string;
     manualDip: number;
     autoDip: number;
+}
+
+interface Employee {
+    id: string;
+    name: string;
 }
 
 function ShiftEntryContent() {
@@ -55,6 +61,7 @@ function ShiftEntryContent() {
     });
 
     const [entries, setEntries] = useState<NozzleEntry[]>([]);
+    const [employees, setEmployees] = useState<Employee[]>([]);
 
     // Manage state for the 4 sides
     const [sides, setSides] = useState<SideEntry[]>([
@@ -67,6 +74,10 @@ function ShiftEntryContent() {
     // Dedicated state for Lube Sales
     const [lubeState, setLubeState] = useState({ total: 0, cash: 0, online: 0 });
 
+    // Fuel Receipt State
+    const [msReceipt, setMsReceipt] = useState<number>(0);
+    const [hsdReceipt, setHsdReceipt] = useState<number>(0);
+
     // Tank Dip Readings State
     const [tankDips, setTankDips] = useState<TankDip[]>([
         { tankName: '1-HSD', manualDip: 0, autoDip: 0 },
@@ -76,6 +87,9 @@ function ShiftEntryContent() {
     const updateTankDip = (tankName: string, field: 'manualDip' | 'autoDip', value: number) => {
         setTankDips(prev => prev.map(t => t.tankName === tankName ? { ...t, [field]: value } : t));
     };
+
+    // Owner cash handover state
+    const [cashToOwner, setCashToOwner] = useState<number>(0);
 
     // Fetch Products, Rates & Auto-Fill Meters from Previous Shift
     useEffect(() => {
@@ -103,6 +117,10 @@ function ShiftEntryContent() {
                     }
                     setRates(rateMap);
 
+                    // Fetch Active Employees
+                    const { data: emps } = await supabase.from('employees').select('id, name').eq('is_active', true).order('name');
+                    if (emps) setEmployees(emps);
+
                     // If Edit Mode: Fetch Existing Data
                     if (editId) {
                         const { data: existingShift } = await supabase
@@ -119,6 +137,8 @@ function ShiftEntryContent() {
                         if (existingShift) {
                             setDate(existingShift.shift_date);
                             setShift(existingShift.shift_number.toString() as '1' | '2');
+                            setMsReceipt(parseFloat(existingShift.ms_receipt) || 0);
+                            setHsdReceipt(parseFloat(existingShift.hsd_receipt) || 0);
 
                             if (existingShift.shift_entries) {
                                 const loadedEntries = existingShift.shift_entries.map((e: any) => ({
@@ -164,6 +184,7 @@ function ShiftEntryContent() {
                                     autoDip: parseFloat(t.auto_dip) || 0
                                 })));
                             }
+                            setCashToOwner(parseFloat(existingShift.cash_to_owner) || 0);
                         }
                         return; // Skip setting default zero entries
                     }
@@ -214,20 +235,29 @@ function ShiftEntryContent() {
         setSides(sides.map(s => s.id === id ? { ...s, [field]: value } : s));
     };
 
+    const updateSideProperty = (machine: string, side: string, field: keyof SideEntry, value: string | number) => {
+        setSides(sides.map(s => (s.machine === machine && s.side === side) ? { ...s, [field]: value } : s));
+    };
+
     // Helper to calculate totals for a specific side
     const getSideTotals = (machine: string, side: string) => {
         const sideEntries = entries.filter(e => e.machine === machine && e.side === side);
         const sideData = sides.find(s => s.machine === machine && s.side === side);
 
-        const totalSale = sideEntries.reduce((sum, e) => {
+        const amount = sideEntries.reduce((sum, e) => {
+            const qty = (e.closing || 0) - (e.opening || 0) - (e.testing || 0);
+            return sum + qty;
+        }, 0);
+
+        const total = sideEntries.reduce((sum, e) => {
             const qty = (e.closing || 0) - (e.opening || 0) - (e.testing || 0);
             return sum + (qty * e.rate);
         }, 0);
 
         const collected = (sideData?.cash || 0) + (sideData?.online || 0);
-        const diff = collected - totalSale;
+        const variance = collected - total;
 
-        return { totalSale, collected, diff };
+        return { amount, total, collected, variance };
     };
 
     // Helper to calculate totals for a full machine
@@ -280,7 +310,9 @@ function ShiftEntryContent() {
                     .update({
                         shift_date: date,
                         shift_number: parseInt(shift),
-                        manager_id: user.id
+                        manager_id: user.id,
+                        ms_receipt: msReceipt,
+                        hsd_receipt: hsdReceipt
                     }).eq('id', editId);
                 if (updateErr) throw updateErr;
 
@@ -288,6 +320,8 @@ function ShiftEntryContent() {
                 await supabase.from('shift_entries').delete().eq('shift_id', editId);
                 await supabase.from('shift_sides').delete().eq('shift_id', editId);
                 await supabase.from('shift_summaries').delete().eq('shift_id', editId);
+                await supabase.from('employee_transactions').delete().eq('shift_id', editId);
+                await supabase.from('locker_transactions').delete().eq('shift_id', editId);
             } else {
                 // Insert New Shift Record Mode
                 const { data: shiftData, error: shiftError } = await supabase
@@ -297,7 +331,10 @@ function ShiftEntryContent() {
                         shift_number: parseInt(shift),
                         manager_id: user.id,
                         status: 'Pending',
-                        locked_flag: false
+                        locked_flag: false,
+                        cash_to_owner: cashToOwner,
+                        ms_receipt: msReceipt,
+                        hsd_receipt: hsdReceipt
                     }])
                     .select()
                     .single();
@@ -347,6 +384,25 @@ function ShiftEntryContent() {
             const { error: sidesError } = await supabase.from('shift_sides').insert(sidesInserts);
             if (sidesError) throw sidesError;
 
+            // 3a. Record Employee Losses for any Ghatti > 0
+            const empTxInserts = sides
+                .filter(s => s.ghatti > 0 && s.nozzleMan && s.nozzleMan !== 'Unassigned') // Ensure there's a loss and an employee selected
+                .map(s => {
+                    const empId = employees.find(e => e.name === s.nozzleMan)?.id;
+                    if (!empId) return null;
+                    return {
+                        employee_id: empId,
+                        type: 'loss',
+                        amount: s.ghatti,
+                        description: `Shortage (Ghatti) on ${s.machine} Side ${s.label} (${date} Shift ${shift})`,
+                        shift_id: shiftId
+                    };
+                }).filter(Boolean);
+
+            if (empTxInserts.length > 0) {
+                await supabase.from('employee_transactions').insert(empTxInserts);
+            }
+
             // 3b. Delete previous tank dips if editing, then insert new ones
             if (editId) await supabase.from('shift_tanks').delete().eq('shift_id', shiftId);
             const { error: tanksError } = await supabase.from('shift_tanks').insert(
@@ -371,6 +427,18 @@ function ShiftEntryContent() {
 
             if (summaryError) throw summaryError;
 
+            // 5. Update Virtual Locker
+            const lockerDeposit = totalCashGlobal - cashToOwner;
+            if (lockerDeposit !== 0) {
+                const { error: lockerError } = await supabase.from('locker_transactions').insert([{
+                    type: 'shift_deposit',
+                    amount: lockerDeposit,
+                    description: `Shift Deposit (${date} Shift ${shift})`,
+                    shift_id: shiftId
+                }]);
+                if (lockerError) console.warn('Locker save failed:', lockerError);
+            }
+
             alert('Shift submitted successfully!');
             router.push('/dashboard/manager');
         } catch (err: any) {
@@ -388,58 +456,56 @@ function ShiftEntryContent() {
     };
 
     return (
-        <div className="max-w-7xl mx-auto space-y-8 pb-24">
+        <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6 lg:space-y-8 pb-28 sm:pb-24">
             {/* Header Area */}
-            <div className="flex items-start justify-between bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-                <div className="flex items-center gap-5">
-                    <Link href="/dashboard/manager" className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 p-3 rounded-xl transition-all h-fit self-start mt-1">
-                        <MoveLeft size={24} />
+            <div className="flex flex-col sm:flex-row items-start sm:justify-between gap-2.5 sm:gap-3 bg-white p-3 sm:p-6 rounded-xl sm:rounded-2xl shadow-sm border border-slate-100">
+                <div className="flex items-center gap-2.5 sm:gap-5 w-full sm:w-auto">
+                    <Link href="/dashboard/manager" className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 p-2 sm:p-3 rounded-lg sm:rounded-xl transition-all h-fit shrink-0">
+                        <MoveLeft size={18} />
                     </Link>
-                    <div>
-                        <h1 className="text-3xl font-extrabold text-slate-800 m-0 tracking-tight flex items-center gap-3">
-                            <span className="bg-blue-600 text-white p-2 rounded-xl text-lg shadow-md">
-                                <Banknote size={24} />
+                    <div className="min-w-0">
+                        <h1 className="text-lg sm:text-2xl lg:text-3xl font-extrabold text-slate-800 m-0 tracking-tight flex items-center gap-2 sm:gap-3">
+                            <span className="bg-blue-600 text-white p-1 sm:p-2 rounded-lg sm:rounded-xl text-xs sm:text-lg shadow-md shrink-0">
+                                <Banknote size={16} />
                             </span>
-                            {editId ? 'Edit Shift' : t('newShift', language)} Entry
+                            <span className="truncate">{editId ? 'Edit' : t('newShift', language)} Entry</span>
                         </h1>
-                        <p className="text-slate-500 font-medium mt-2">{editId ? 'Update your' : 'Record accurate'} nozzle readings and nozzleman collections for this operational shift.</p>
+                        <p className="text-slate-400 font-medium mt-0.5 sm:mt-2 text-[10px] sm:text-sm">{editId ? 'Update' : 'Record'} nozzle readings & collections.</p>
                     </div>
                 </div>
 
-                <div className="hidden lg:flex items-center gap-2 bg-emerald-50 text-emerald-700 px-4 py-2 rounded-full font-bold text-sm border border-emerald-100 shadow-sm shadow-emerald-100/50">
+                <div className="hidden lg:flex items-center gap-2 bg-emerald-50 text-emerald-700 px-4 py-2 rounded-full font-bold text-sm border border-emerald-100 shadow-sm shadow-emerald-100/50 shrink-0">
                     <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div> Active Shift Session
                 </div>
             </div>
 
             {/* Shift Details Context */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-white p-5 rounded-2xl border-b-4 border-l border-r border-t border-slate-100 border-b-blue-500 shadow-sm relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 w-24 h-24 bg-blue-50 rounded-bl-full -z-10 transition-transform group-hover:scale-110"></div>
-                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 block">{t('date', language)}</label>
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-6">
+                <div className="bg-white p-2.5 sm:p-5 rounded-xl sm:rounded-2xl border-b-4 border-l border-r border-t border-slate-100 border-b-blue-500 shadow-sm relative overflow-hidden group">
+                    <label className="text-[9px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 sm:mb-2 block">{t('date', language)}</label>
                     <input
                         type="date"
-                        className="w-full bg-transparent border-0 p-0 text-xl font-bold text-slate-800 focus:ring-0"
+                        className="w-full bg-transparent border-0 p-0 text-sm sm:text-xl font-bold text-slate-800 focus:ring-0"
                         value={date}
                         onChange={(e) => setDate(e.target.value)}
                     />
                 </div>
-                <div className="bg-white p-5 rounded-2xl border-b-4 border-l border-r border-t border-slate-100 border-b-indigo-500 shadow-sm relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-50 rounded-bl-full -z-10 transition-transform group-hover:scale-110"></div>
-                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 block">{t('shift', language)}</label>
+                <div className="bg-white p-2.5 sm:p-5 rounded-xl sm:rounded-2xl border-b-4 border-l border-r border-t border-slate-100 border-b-indigo-500 shadow-sm relative overflow-hidden group">
+                    <label className="text-[9px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 sm:mb-2 block">{t('shift', language)}</label>
                     <select
-                        className="w-full bg-transparent border-0 p-0 text-xl font-bold text-slate-800 focus:ring-0 appearance-none cursor-pointer"
+                        className="w-full bg-transparent border-0 p-0 text-sm sm:text-xl font-bold text-slate-800 focus:ring-0 appearance-none cursor-pointer"
                         value={shift}
                         onChange={(e) => setShift(e.target.value as '1' | '2')}
                     >
-                        <option value="1">Shift 1 (Morning)</option>
-                        <option value="2">Shift 2 (Evening)</option>
+                        <option value="1">Shift 1 (AM)</option>
+                        <option value="2">Shift 2 (PM)</option>
                     </select>
                 </div>
-                <div className="bg-gradient-to-br from-slate-50 to-slate-100 p-5 rounded-2xl border border-slate-200 shadow-inner">
-                    <label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 block">{t('managerName', language)}</label>
-                    <div className="flex items-center gap-3">
-                        <div className="bg-slate-200 p-1.5 rounded-full"><UserRound size={16} className="text-slate-600" /></div>
-                        <input type="text" className="w-full bg-transparent border-0 p-0 text-xl font-bold text-slate-600 focus:ring-0" value={user?.name || ''} disabled />
+                <div className="col-span-2 lg:col-span-1 bg-gradient-to-br from-slate-50 to-slate-100 p-2.5 sm:p-5 rounded-xl sm:rounded-2xl border border-slate-200 shadow-inner">
+                    <label className="text-[9px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 sm:mb-2 block">{t('managerName', language)}</label>
+                    <div className="flex items-center gap-1.5 sm:gap-3">
+                        <div className="bg-slate-200 p-1 rounded-full"><UserRound size={12} className="text-slate-600" /></div>
+                        <input type="text" className="w-full bg-transparent border-0 p-0 text-sm sm:text-xl font-bold text-slate-600 focus:ring-0" value={user?.name || ''} disabled />
                     </div>
                 </div>
             </div>
@@ -450,18 +516,18 @@ function ShiftEntryContent() {
                 const isFront = machine === 'Front';
 
                 return (
-                    <div key={machine} className={`bg-white rounded-3xl overflow-hidden shadow-xl shadow-slate-200/40 border ${isFront ? 'border-blue-100' : 'border-purple-100'} transition-shadow hover:shadow-2xl`}>
+                    <div key={machine} className={`bg-white rounded-2xl sm:rounded-3xl overflow-hidden shadow-xl shadow-slate-200/40 border ${isFront ? 'border-blue-100' : 'border-purple-100'} transition-shadow hover:shadow-2xl`}>
                         {/* Machine Header */}
-                        <div className={`p-6 bg-gradient-to-r ${isFront ? 'from-blue-900 to-blue-800' : 'from-purple-900 to-purple-800'} text-white flex flex-col md:flex-row justify-between items-start md:items-center gap-4`}>
-                            <h2 className="text-2xl font-extrabold m-0 flex items-center gap-3">
-                                <div className={`p-2 rounded-xl ${isFront ? 'bg-blue-700/50' : 'bg-purple-700/50'} shadow-inner`}>
-                                    <Calculator size={24} className="text-white/90" />
+                        <div className={`p-3 sm:p-6 bg-gradient-to-r ${isFront ? 'from-blue-900 to-blue-800' : 'from-purple-900 to-purple-800'} text-white flex flex-row justify-between items-center gap-2 sm:gap-4`}>
+                            <h2 className="text-base sm:text-2xl font-extrabold m-0 flex items-center gap-1.5 sm:gap-3">
+                                <div className={`p-1 sm:p-2 rounded-lg sm:rounded-xl ${isFront ? 'bg-blue-700/50' : 'bg-purple-700/50'} shadow-inner shrink-0`}>
+                                    <Calculator size={16} className="text-white/90" />
                                 </div>
-                                {machine} Machine
+                                <span className="truncate">{machine} Machine</span>
                             </h2>
-                            <div className="flex gap-4 items-center bg-white/10 px-5 py-2.5 rounded-2xl backdrop-blur-sm border border-white/10">
-                                <span className="text-sm font-medium text-white/70 uppercase tracking-wider">Total Sale</span>
-                                <strong className="text-2xl font-black tracking-tight text-white drop-shadow-md">₹{machineStats.totalSale.toFixed(2)}</strong>
+                            <div className="flex gap-2 items-center bg-white/10 px-2 sm:px-5 py-1 sm:py-2.5 rounded-lg sm:rounded-2xl backdrop-blur-sm border border-white/10 shrink-0">
+                                <span className="text-[10px] sm:text-sm font-medium text-white/70 uppercase tracking-wider hidden xs:inline">Total</span>
+                                <strong className="text-sm sm:text-2xl font-black tracking-tight text-white drop-shadow-md">₹{machineStats.totalSale.toFixed(0)}</strong>
                             </div>
                         </div>
 
@@ -473,286 +539,286 @@ function ShiftEntryContent() {
 
                             return (
                                 <div key={`${machine}-${sideMarker}`} className="border-b-2 border-slate-100/60 last:border-b-0">
-                                    <div className="bg-slate-50/50 p-6 flex flex-col xl:flex-row justify-between xl:items-center gap-6">
+                                    <div className="bg-slate-50/50 p-3 sm:p-6 flex flex-col xl:flex-row justify-between xl:items-center gap-3 sm:gap-6">
 
                                         {/* Left: Side Name & Nozzle Man */}
-                                        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 xl:w-1/5">
-                                            <div className={`flex justify-center items-center w-14 h-14 rounded-2xl font-black text-xl shadow-sm border-2 ${sideMarker === 'A' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
+                                        <div className="flex items-center gap-2 sm:gap-3 xl:w-1/4">
+                                            <div className={`flex justify-center items-center w-9 h-9 sm:w-14 sm:h-14 rounded-lg sm:rounded-2xl font-black text-sm sm:text-xl shadow-sm border-2 shrink-0 ${sideMarker === 'A' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
                                                 {sideMarker}
                                             </div>
-                                            <div className="space-y-2 w-full">
-                                                <div className="text-xs font-bold text-slate-400 uppercase tracking-widest pl-1">Side {sideMarker} <span className="text-slate-300">({sideLabel})</span></div>
-                                                <div className="flex items-center relative w-full">
-                                                    <div className="absolute left-3 w-8 h-8 bg-slate-100 rounded-full flex items-center justify-center text-slate-500">
-                                                        <UserRound size={16} />
-                                                    </div>
-                                                    <input
-                                                        type="text"
-                                                        placeholder="Name / Staff ID"
-                                                        className="w-full pl-14 pr-4 py-3 bg-white border-2 border-slate-200 rounded-xl font-bold text-slate-800 focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition-all placeholder:text-slate-300"
-                                                        value={sideState?.nozzleMan || ''}
-                                                        onChange={(e) => updateSide(sideState!.id, 'nozzleMan', e.target.value)}
-                                                    />
-                                                </div>
+                                            <div className="space-y-1 sm:space-y-2 flex-1 min-w-0">
+                                                <div className="text-[9px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest truncate">Side {sideMarker} <span className="text-slate-300 hidden sm:inline">({sideLabel})</span></div>
+                                                <select
+                                                    value={sideState?.employeeId || ''}
+                                                    onChange={(e) => updateSideProperty(machine, sideMarker, 'employeeId', e.target.value)}
+                                                    className="w-full py-1.5 sm:py-2.5 px-2 bg-white/80 rounded-lg text-xs sm:text-base text-slate-700 font-bold focus:bg-white focus:ring-2 focus:ring-blue-400 focus:outline-none transition-all shadow-sm border border-slate-200 appearance-none"
+                                                    disabled={loading}
+                                                >
+                                                    <option value="">Employee...</option>
+                                                    {employees.map(emp => (
+                                                        <option key={emp.id} value={emp.id}>{emp.name}</option>
+                                                    ))}
+                                                </select>
                                             </div>
                                         </div>
 
-                                        {/* Center: Table Data */}
-                                        <div className="overflow-x-auto xl:w-1/2 -mx-4 sm:mx-0 px-4 sm:px-0">
-                                            <div className="min-w-[600px] border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm">
-                                                <table className="w-full text-left">
-                                                    <thead>
-                                                        <tr className="bg-slate-50/80 text-slate-400 text-[10px] uppercase font-bold tracking-wider">
-                                                            <th className="py-3 px-4 w-24">Petrol/Diesel</th>
-                                                            <th className="py-3 px-4 w-16">Noz</th>
-                                                            <th className="py-3 px-4">Initial Open</th>
-                                                            <th className="py-3 px-4">Final Close</th>
-                                                            <th className="py-3 px-4">Test Qty</th>
-                                                            <th className="py-3 px-4 text-right bg-blue-50/50 text-blue-800 border-l border-blue-100">Sale Ltrs</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody className="divide-y divide-slate-100">
-                                                        {entries.filter(e => e.machine === machine && e.side === sideMarker).map((entry, index) => {
-                                                            const saleQty = (entry.closing || 0) - (entry.opening || 0) - (entry.testing || 0);
-                                                            return (
-                                                                <tr key={entry.id} className={`${index % 2 === 0 ? 'bg-white' : 'bg-slate-50/30'} group hover:bg-blue-50/20 transition-colors`}>
-                                                                    <td className="py-3 px-4">
-                                                                        <span className={`px-2.5 py-1 rounded-md text-xs font-bold ring-1 ring-inset ${entry.product === 'HSD' ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200'}`}>
-                                                                            {entry.product}
-                                                                        </span>
-                                                                    </td>
-                                                                    <td className="py-3 px-4 text-slate-500 font-bold">#{entry.nozzleNo}</td>
-                                                                    <td className="py-2 px-3">
-                                                                        <input type="number" className="w-full py-2 px-3 bg-slate-100/80 rounded-lg text-slate-700 font-semibold focus:bg-white focus:ring-2 focus:ring-blue-400 focus:outline-none transition-all placeholder:text-slate-300 border-transparent focus:border-transparent" placeholder="0.00" value={entry.opening === 0 ? '' : entry.opening} onChange={(e) => updateEntry(entry.id, 'opening', parseFloat(e.target.value) || 0)} />
-                                                                    </td>
-                                                                    <td className="py-2 px-3">
-                                                                        <input type="number" className="w-full py-2 px-3 bg-slate-100/80 rounded-lg text-slate-700 font-semibold focus:bg-white focus:ring-2 focus:ring-blue-400 focus:outline-none transition-all placeholder:text-slate-300 border-transparent focus:border-transparent" placeholder="0.00" value={entry.closing === 0 ? '' : entry.closing} onChange={(e) => updateEntry(entry.id, 'closing', parseFloat(e.target.value) || 0)} />
-                                                                    </td>
-                                                                    <td className="py-2 px-3">
-                                                                        <input type="number" className="w-full py-2 px-3 bg-slate-100/80 rounded-lg text-slate-600 focus:bg-white focus:ring-2 focus:ring-blue-400 focus:outline-none transition-all placeholder:text-slate-300 border-transparent focus:border-transparent" placeholder="Test" value={entry.testing === 0 ? '' : entry.testing} onChange={(e) => updateEntry(entry.id, 'testing', parseFloat(e.target.value) || 0)} />
-                                                                    </td>
-                                                                    <td className="py-3 px-4 text-right font-bold text-blue-700 bg-blue-50/30 border-l border-blue-50">
-                                                                        {saleQty > 0 ? saleQty.toFixed(2) : '-'}
-                                                                    </td>
-                                                                </tr>
-                                                            );
-                                                        })}
-                                                    </tbody>
-                                                </table>
+                                        {/* Right: Real-time Stats Context */}
+                                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4 xl:w-3/4">
+                                            <div className="bg-white p-2 sm:p-4 rounded-lg sm:rounded-2xl shadow-sm border border-slate-100">
+                                                <div className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5 flex items-center gap-1"><div className="w-1 h-1 bg-blue-400 rounded-full"></div> Disbursed</div>
+                                                <div className="text-sm sm:text-xl font-black text-slate-700">{sideStats.amount.toFixed(1)} L</div>
                                             </div>
-                                        </div>
+                                            <div className="bg-white p-2 sm:p-4 rounded-lg sm:rounded-2xl shadow-sm border border-slate-100">
+                                                <div className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5 flex items-center gap-1"><Banknote size={10} className="text-emerald-500" /> Value</div>
+                                                <div className="text-sm sm:text-xl font-black text-emerald-600 tracking-tight">₹{sideStats.total.toFixed(0)}</div>
+                                            </div>
 
-                                        {/* Right: Cash, Online & Ghatti Collections */}
-                                        <div className="xl:w-1/4 flex flex-col gap-3">
-                                            <div className="bg-white p-3 rounded-2xl border-2 border-slate-100 shadow-sm relative overflow-hidden group">
-                                                <div className="absolute top-0 right-0 w-16 h-16 bg-emerald-50 rounded-bl-full -z-10 group-focus-within:scale-150 transition-transform"></div>
-                                                <label className="text-[11px] font-bold text-slate-400 uppercase mb-1.5 flex items-center gap-1.5"><Banknote size={14} className="text-emerald-500" /> Cash Collected</label>
+                                            {/* Transaction Inputs Layer */}
+                                            <div className="bg-white p-2 sm:p-4 rounded-lg sm:rounded-2xl shadow-sm border border-slate-200 focus-within:border-emerald-300 focus-within:ring-2 focus-within:ring-emerald-500/10 transition-all">
+                                                <label className="text-[9px] sm:text-[10px] font-bold text-emerald-500 uppercase tracking-widest mb-0.5 block">Cash Rx</label>
                                                 <div className="flex items-center">
-                                                    <span className="text-slate-400 font-medium text-lg mr-2">₹</span>
+                                                    <span className="text-emerald-400 font-medium mr-1 text-xs">₹</span>
                                                     <input
                                                         type="number"
-                                                        placeholder="0.00"
-                                                        className="w-full bg-transparent border-0 p-0 text-xl font-bold text-emerald-700 focus:ring-0 placeholder:text-slate-200"
+                                                        placeholder="0"
+                                                        className="w-full bg-transparent border-0 p-0 text-sm sm:text-xl font-black text-slate-800 focus:ring-0 placeholder:text-slate-200"
                                                         value={sideState?.cash || ''}
-                                                        onChange={(e) => updateSide(sideState!.id, 'cash', parseFloat(e.target.value) || 0)}
+                                                        onChange={(e) => updateSideProperty(machine, sideMarker, 'cash', parseFloat(e.target.value) || 0)}
                                                     />
                                                 </div>
                                             </div>
-                                            <div className="bg-white p-3 rounded-2xl border-2 border-slate-100 shadow-sm relative overflow-hidden group">
-                                                <div className="absolute top-0 right-0 w-16 h-16 bg-indigo-50 rounded-bl-full -z-10 group-focus-within:scale-150 transition-transform"></div>
-                                                <label className="text-[11px] font-bold text-slate-400 uppercase mb-1.5 flex items-center gap-1.5"><CreditCard size={14} className="text-indigo-500" /> Online Collected</label>
+                                            <div className="bg-white p-2 sm:p-4 rounded-lg sm:rounded-2xl shadow-sm border border-slate-200 focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-500/10 transition-all">
+                                                <label className="text-[9px] sm:text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-0.5 block">UPI Rx</label>
                                                 <div className="flex items-center">
-                                                    <span className="text-slate-400 font-medium text-lg mr-2">₹</span>
+                                                    <span className="text-indigo-400 font-medium mr-1 text-xs">₹</span>
                                                     <input
                                                         type="number"
-                                                        placeholder="0.00"
-                                                        className="w-full bg-transparent border-0 p-0 text-xl font-bold text-indigo-700 focus:ring-0 placeholder:text-slate-200"
+                                                        placeholder="0"
+                                                        className="w-full bg-transparent border-0 p-0 text-sm sm:text-xl font-black text-slate-800 focus:ring-0 placeholder:text-slate-200"
                                                         value={sideState?.online || ''}
-                                                        onChange={(e) => updateSide(sideState!.id, 'online', parseFloat(e.target.value) || 0)}
+                                                        onChange={(e) => updateSideProperty(machine, sideMarker, 'online', parseFloat(e.target.value) || 0)}
                                                     />
                                                 </div>
                                             </div>
-                                            {/* Ghatti (Shortage) */}
-                                            <div className="bg-red-50/80 p-3 rounded-2xl border-2 border-red-100 shadow-sm relative overflow-hidden group">
-                                                <label className="text-[11px] font-bold text-red-400 uppercase mb-1.5 flex items-center gap-1.5"><AlertTriangle size={14} className="text-red-400" /> Ghatti (Shortage)</label>
-                                                <div className="flex items-center">
-                                                    <span className="text-red-300 font-medium text-lg mr-2">₹</span>
-                                                    <input
-                                                        type="number"
-                                                        placeholder="0.00"
-                                                        className="w-full bg-transparent border-0 p-0 text-xl font-bold text-red-600 focus:ring-0 placeholder:text-red-200"
-                                                        value={sideState?.ghatti || ''}
-                                                        onChange={(e) => updateSide(sideState!.id, 'ghatti', parseFloat(e.target.value) || 0)}
-                                                    />
+                                        </div>
+
+                                    </div>
+
+                                    {/* Nozzle Meter Entries */}
+                                    <div className="bg-white p-2 sm:p-6 border-t border-slate-100">
+                                        <h4 className="text-[11px] sm:text-sm font-bold text-slate-500 mb-2 sm:mb-4 flex items-center gap-1.5">
+                                            <Gauge size={12} className="text-blue-500" />
+                                            Nozzles - Side {sideMarker}
+                                        </h4>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-4">
+                                            {entries.filter(e => e.machine === machine && e.side === sideMarker).map(entry => (
+                                                <div key={entry.id} className="bg-slate-50/50 p-2 sm:p-4 rounded-lg sm:rounded-xl border border-slate-200">
+                                                    <div className="flex items-center gap-1.5 sm:gap-2 mb-1.5 sm:mb-3">
+                                                        <div className={`w-6 h-6 sm:w-8 sm:h-8 rounded-md sm:rounded-lg flex items-center justify-center font-black text-[10px] sm:text-sm shrink-0 ${entry.product === 'MS' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                                                            {entry.nozzleNo}
+                                                        </div>
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="text-[10px] sm:text-xs font-bold text-slate-500 truncate">{entry.product} - N{entry.nozzleNo}</div>
+                                                            <div className="text-[9px] text-slate-400">₹{entry.rate}/L</div>
+                                                        </div>
+                                                        <div className="text-right">
+                                                            <div className="text-[9px] text-slate-400 leading-none">Sale</div>
+                                                            <div className="text-[11px] sm:text-sm font-black text-slate-700">{(entry.closing - entry.opening - entry.testing).toFixed(1)}L</div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
+                                                        <div>
+                                                            <label className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase block mb-0.5 sm:mb-1">Open</label>
+                                                            <input
+                                                                type="number"
+                                                                step="0.01"
+                                                                inputMode="decimal"
+                                                                className="w-full px-1.5 sm:px-2 py-1.5 sm:py-2 bg-white rounded-lg border border-slate-200 text-xs sm:text-sm font-mono font-bold text-slate-700 focus:ring-2 focus:ring-blue-400 focus:outline-none"
+                                                                value={entry.opening || ''}
+                                                                onChange={(e) => updateEntry(entry.id, 'opening', parseFloat(e.target.value) || 0)}
+                                                                placeholder="0"
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase block mb-0.5 sm:mb-1">Close</label>
+                                                            <input
+                                                                type="number"
+                                                                step="0.01"
+                                                                inputMode="decimal"
+                                                                className="w-full px-1.5 sm:px-2 py-1.5 sm:py-2 bg-white rounded-lg border border-slate-200 text-xs sm:text-sm font-mono font-bold text-slate-700 focus:ring-2 focus:ring-blue-400 focus:outline-none"
+                                                                value={entry.closing || ''}
+                                                                onChange={(e) => updateEntry(entry.id, 'closing', parseFloat(e.target.value) || 0)}
+                                                                placeholder="0"
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase block mb-0.5 sm:mb-1">Test</label>
+                                                            <input
+                                                                type="number"
+                                                                step="0.01"
+                                                                inputMode="decimal"
+                                                                className="w-full px-1.5 sm:px-2 py-1.5 sm:py-2 bg-white rounded-lg border border-slate-200 text-xs sm:text-sm font-mono font-bold text-slate-700 focus:ring-2 focus:ring-blue-400 focus:outline-none"
+                                                                value={entry.testing || ''}
+                                                                onChange={(e) => updateEntry(entry.id, 'testing', parseFloat(e.target.value) || 0)}
+                                                                placeholder="0"
+                                                            />
+                                                        </div>
+                                                    </div>
                                                 </div>
-                                            </div>
+                                            ))}
                                         </div>
                                     </div>
 
-                                    {/* Side Sub-summary bar */}
-                                    <div className={`px-6 py-3 flex flex-wrap justify-end items-center gap-6 border-t border-slate-100 text-sm ${Math.abs(sideStats.diff) > 5 ? (sideStats.diff < 0 ? 'bg-red-50/50' : 'bg-emerald-50/50') : 'bg-white'}`}>
-                                        <div className="text-slate-500 font-medium">Side Expected Value: <strong className="text-slate-700 ml-1">₹{sideStats.totalSale.toFixed(2)}</strong></div>
-                                        <div className="w-1.5 h-1.5 rounded-full bg-slate-300"></div>
-                                        <div className="text-slate-500 font-medium">Provided by Staff: <strong className="text-slate-700 ml-1">₹{sideStats.collected.toFixed(2)}</strong></div>
+                                    {/* Verification Matrix Row */}
+                                    <div className="bg-white px-2.5 sm:px-6 py-2 sm:py-4 flex flex-row justify-between items-center gap-2 sm:gap-4 border-t border-slate-50/50">
+                                        <div className="bg-slate-50 px-2 sm:px-4 py-1.5 rounded-lg sm:rounded-xl border border-slate-100 flex items-center gap-1.5">
+                                            <div className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-wider">Ghatti</div>
+                                            <div className="flex items-center text-red-500 font-bold min-w-0">
+                                                <span className="text-[10px] mr-0.5">₹</span>
+                                                <input
+                                                    type="number"
+                                                    inputMode="decimal"
+                                                    placeholder="0"
+                                                    className="w-12 sm:w-16 bg-transparent border-0 p-0 focus:ring-0 text-red-600 font-black text-xs sm:text-sm placeholder:text-red-300/50"
+                                                    value={sideState?.ghatti || ''}
+                                                    onChange={(e) => updateSideProperty(machine, sideMarker, 'ghatti', parseFloat(e.target.value) || 0)}
+                                                />
+                                            </div>
+                                        </div>
 
-                                        <div className={`ml-4 pl-4 border-l-2 font-black ${Math.abs(sideStats.diff) > 5 ? (sideStats.diff < 0 ? 'text-red-600 border-red-200' : 'text-emerald-600 border-emerald-200') : 'text-slate-400 border-slate-200'}`}>
-                                            STATUS: {Math.abs(sideStats.diff) <= 5 ? 'MATCHED ✓' : (sideStats.diff < 0 ? `SHORT ₹${Math.abs(sideStats.diff).toFixed(2)}` : `EXCESS +₹${sideStats.diff.toFixed(2)}`)}
+                                        <div className={`px-2.5 sm:px-5 py-1.5 rounded-lg sm:rounded-xl flex items-center gap-2 sm:gap-3 font-bold border shadow-sm ${Math.abs(sideStats.variance) > 5 ? 'bg-red-50 text-red-600 border-red-200 shadow-red-500/10' : 'bg-emerald-50 text-emerald-700 border-emerald-200 shadow-emerald-500/10'}`}>
+                                            <span className="text-[9px] sm:text-[10px] uppercase tracking-wider opacity-80 hidden xs:inline">Margin</span>
+                                            <span className="text-xs sm:text-lg font-black">{sideStats.variance > 0 ? '+' : ''}₹{sideStats.variance.toFixed(0)}</span>
                                         </div>
                                     </div>
                                 </div>
                             );
                         })}
-
-                        {/* Machine Total Footer */}
-                        <div className="bg-slate-50 p-6 flex flex-col md:flex-row justify-between items-center gap-6 border-t font-sans">
-                            <div className="font-extrabold text-slate-400 uppercase tracking-widest text-sm flex items-center gap-2">
-                                <span className={`w-3 h-3 rounded-full ${isFront ? 'bg-blue-400' : 'bg-purple-400'}`}></span>
-                                {machine} Machine Audit
-                            </div>
-                            <div className="flex flex-wrap justify-center gap-8">
-                                <div className="text-center">
-                                    <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">Expected Income</div>
-                                    <div className="text-xl font-bold text-slate-700">₹{machineStats.totalSale.toFixed(2)}</div>
-                                </div>
-                                <div className="w-px h-10 bg-slate-200"></div>
-                                <div className="text-center">
-                                    <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">Total Reported Cash</div>
-                                    <div className="text-xl font-bold text-emerald-600">₹{machineStats.totalCash.toFixed(2)}</div>
-                                </div>
-                                <div className="text-center">
-                                    <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">Total Digital Payments</div>
-                                    <div className="text-xl font-bold text-indigo-600">₹{machineStats.totalOnline.toFixed(2)}</div>
-                                </div>
-                                <div className={`text-center px-6 py-2 rounded-xl ring-1 ${Math.abs(machineStats.diff) > 5 ? (machineStats.diff < 0 ? 'bg-red-50 ring-red-200' : 'bg-emerald-50 ring-emerald-200') : 'bg-white ring-slate-200'} shadow-sm`}>
-                                    <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">Machine Variance</div>
-                                    <div className={`text-xl font-black ${Math.abs(machineStats.diff) > 5 ? (machineStats.diff < 0 ? 'text-red-600' : 'text-emerald-600') : 'text-slate-800'}`}>
-                                        {machineStats.diff > 0 ? '+' : ''}₹{machineStats.diff.toFixed(2)}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
                     </div>
                 );
             })}
 
-            {/* Dedicated Lube Sales Module */}
-            <div className="card w-full mb-8 relative border-2 border-amber-100 shadow-lg shadow-amber-500/5 bg-gradient-to-br from-amber-50/50 to-white overflow-hidden rounded-[2rem]">
-                <div className="absolute top-0 right-0 w-64 h-64 bg-amber-400 rounded-full blur-[100px] opacity-10 pointer-events-none"></div>
-                <div className="flex items-center gap-4 border-b border-amber-100 pb-5 mb-6 relative z-10">
-                    <div className="w-12 h-12 bg-amber-100 rounded-2xl flex items-center justify-center shadow-inner">
-                        <Banknote size={24} className="text-amber-600" />
-                    </div>
-                    <div>
-                        <h3 className="text-xl font-black text-slate-800 tracking-tight m-0">Consolidated Lube Sales</h3>
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Additional Goods Revenue</p>
+            {/* Lube Sales Card */}
+            <div className="bg-white rounded-2xl sm:rounded-3xl overflow-hidden shadow-xl shadow-slate-200/40 border border-amber-100">
+                {/* Lube Header */}
+                <div className="p-3 sm:p-6 bg-gradient-to-r from-amber-900 to-amber-800 text-white flex flex-row justify-between items-center gap-2 sm:gap-3">
+                    <h2 className="text-base sm:text-2xl font-extrabold m-0 flex items-center gap-1.5 sm:gap-3">
+                        <div className="p-1 sm:p-2 rounded-lg sm:rounded-xl bg-amber-700/50 shadow-inner shrink-0">
+                            <FlaskConical size={16} className="text-white/90" />
+                        </div>
+                        <span className="truncate">Lube Sales</span>
+                    </h2>
+                    <div className="flex gap-2 items-center bg-white/10 px-2 sm:px-5 py-1 sm:py-2.5 rounded-lg sm:rounded-2xl backdrop-blur-sm border border-white/10 shrink-0">
+                        <span className="text-[10px] sm:text-sm font-medium text-white/70 uppercase tracking-wider hidden xs:inline">Total</span>
+                        <strong className="text-sm sm:text-2xl font-black tracking-tight text-white drop-shadow-md">₹{lubeState.total.toFixed(0)}</strong>
                     </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
-                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm group">
-                        <label className="text-[11px] font-bold text-slate-400 uppercase mb-2 flex items-center gap-1.5">Total Sold Value</label>
-                        <div className="flex items-center">
-                            <span className="text-slate-400 font-medium text-2xl mr-2">₹</span>
-                            <input
-                                type="number"
-                                placeholder="0.00"
-                                className="w-full bg-transparent border-0 p-0 text-3xl font-black text-slate-800 focus:ring-0 placeholder:text-slate-200"
-                                value={lubeState.total === 0 ? '' : lubeState.total}
-                                onChange={(e) => setLubeState({ ...lubeState, total: parseFloat(e.target.value) || 0 })}
-                            />
+                {/* Lube Content */}
+                <div className="bg-white p-2.5 sm:p-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-6">
+                        <div className="bg-gradient-to-br from-amber-50 to-amber-100/50 p-2.5 sm:p-5 rounded-xl sm:rounded-2xl border-2 border-amber-100 shadow-sm flex items-center sm:block gap-3 sm:gap-0">
+                            <label className="text-[9px] sm:text-xs font-bold text-amber-600 uppercase tracking-widest sm:mb-2 block sm:w-auto w-16 shrink-0">Lube Total</label>
+                            <div className="flex items-center flex-1">
+                                <span className="text-amber-500 font-medium mr-1 text-sm sm:text-xl">₹</span>
+                                <input type="number" inputMode="decimal" placeholder="0" className="w-full bg-white border border-amber-200 rounded-lg sm:rounded-xl px-2 sm:px-4 py-1.5 sm:py-3 text-sm sm:text-2xl font-black text-slate-800 focus:ring-2 focus:ring-amber-400/30 focus:outline-none placeholder:text-slate-300 transition-all"
+                                    value={lubeState.total || ''}
+                                    onChange={(e) => setLubeState({ ...lubeState, total: parseFloat(e.target.value) || 0 })}
+                                />
+                            </div>
+                        </div>
+                        <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 p-2.5 sm:p-5 rounded-xl sm:rounded-2xl border-2 border-emerald-100 shadow-sm flex items-center sm:block gap-3 sm:gap-0">
+                            <label className="text-[9px] sm:text-xs font-bold text-emerald-600 uppercase tracking-widest sm:mb-2 block sm:w-auto w-16 shrink-0">Cash Rx</label>
+                            <div className="flex items-center flex-1">
+                                <span className="text-emerald-500 font-medium mr-1 text-sm sm:text-xl">₹</span>
+                                <input type="number" inputMode="decimal" placeholder="0" className="w-full bg-white border border-emerald-200 rounded-lg sm:rounded-xl px-2 sm:px-4 py-1.5 sm:py-3 text-sm sm:text-2xl font-black text-slate-800 focus:ring-2 focus:ring-emerald-400/30 focus:outline-none placeholder:text-slate-300 transition-all"
+                                    value={lubeState.cash || ''}
+                                    onChange={(e) => setLubeState({ ...lubeState, cash: parseFloat(e.target.value) || 0 })}
+                                />
+                            </div>
+                        </div>
+                        <div className="bg-gradient-to-br from-indigo-50 to-indigo-100/50 p-2.5 sm:p-5 rounded-xl sm:rounded-2xl border-2 border-indigo-100 shadow-sm flex items-center sm:block gap-3 sm:gap-0">
+                            <label className="text-[9px] sm:text-xs font-bold text-indigo-600 uppercase tracking-widest sm:mb-2 block sm:w-auto w-16 shrink-0">UPI Rx</label>
+                            <div className="flex items-center flex-1">
+                                <span className="text-indigo-500 font-medium mr-1 text-sm sm:text-xl">₹</span>
+                                <input type="number" inputMode="decimal" placeholder="0" className="w-full bg-white border border-indigo-200 rounded-lg sm:rounded-xl px-2 sm:px-4 py-1.5 sm:py-3 text-sm sm:text-2xl font-black text-slate-800 focus:ring-2 focus:ring-indigo-400/30 focus:outline-none placeholder:text-slate-300 transition-all"
+                                    value={lubeState.online || ''}
+                                    onChange={(e) => setLubeState({ ...lubeState, online: parseFloat(e.target.value) || 0 })}
+                                />
+                            </div>
                         </div>
                     </div>
-                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm group">
-                        <label className="text-[11px] font-bold text-emerald-500 uppercase mb-2 flex items-center gap-1.5">Cash Collected</label>
-                        <div className="flex items-center">
-                            <span className="text-emerald-400 font-medium text-2xl mr-2">₹</span>
-                            <input
-                                type="number"
-                                placeholder="0.00"
-                                className="w-full bg-transparent border-0 p-0 text-3xl font-black text-emerald-700 focus:ring-0 placeholder:text-slate-200"
-                                value={lubeState.cash === 0 ? '' : lubeState.cash}
-                                onChange={(e) => setLubeState({ ...lubeState, cash: parseFloat(e.target.value) || 0 })}
-                            />
-                        </div>
-                    </div>
-                    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm group">
-                        <label className="text-[11px] font-bold text-indigo-500 uppercase mb-2 flex items-center gap-1.5">Online Collected</label>
-                        <div className="flex items-center">
-                            <span className="text-indigo-400 font-medium text-2xl mr-2">₹</span>
-                            <input
-                                type="number"
-                                placeholder="0.00"
-                                className="w-full bg-transparent border-0 p-0 text-3xl font-black text-indigo-700 focus:ring-0 placeholder:text-slate-200"
-                                value={lubeState.online === 0 ? '' : lubeState.online}
-                                onChange={(e) => setLubeState({ ...lubeState, online: parseFloat(e.target.value) || 0 })}
-                            />
-                        </div>
-                    </div>
-                </div>
 
-                <div className={`mt-6 px-6 py-4 rounded-xl flex justify-between items-center text-sm font-bold border ${Math.abs((lubeState.cash + lubeState.online) - lubeState.total) > 5 ? 'bg-red-50 border-red-200 text-red-600' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
-                    <span>LUBE NET BALANCE / VARIANCE</span>
-                    <span className="text-xl font-black">{((lubeState.cash + lubeState.online) - lubeState.total) > 0 ? '+' : ''}₹{((lubeState.cash + lubeState.online) - lubeState.total).toFixed(2)}</span>
+                    <div className="mt-4 sm:mt-6 bg-slate-50/50 p-3 sm:p-5 rounded-xl sm:rounded-2xl border border-slate-200">
+                        <div className="flex flex-row justify-between items-center gap-3">
+                            <div>
+                                <div className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest mb-0.5">Collection</div>
+                                <div className="text-lg sm:text-2xl font-black text-slate-700">₹{(lubeState.cash + lubeState.online).toFixed(0)}</div>
+                            </div>
+                            <div className={`px-3 sm:px-6 py-2 sm:py-3 rounded-lg sm:rounded-xl flex items-center gap-2 sm:gap-3 font-bold border shadow-sm ${Math.abs((lubeState.cash + lubeState.online) - lubeState.total) > 5 ? 'bg-red-50 text-red-600 border-red-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
+                                <span className="text-[9px] sm:text-xs uppercase tracking-wider opacity-80">Var</span>
+                                <span className="text-base sm:text-xl font-black">
+                                    {((lubeState.cash + lubeState.online) - lubeState.total) > 0 ? '+' : ''}
+                                    ₹{((lubeState.cash + lubeState.online) - lubeState.total).toFixed(0)}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
             {/* Tank Dip Readings Card */}
-            <div className="card w-full mb-8 relative border-2 border-teal-100 shadow-lg shadow-teal-500/5 bg-gradient-to-br from-teal-50/50 to-white overflow-hidden rounded-[2rem]">
-                <div className="absolute top-0 right-0 w-64 h-64 bg-teal-400 rounded-full blur-[100px] opacity-10 pointer-events-none"></div>
-                <div className="flex items-center gap-4 border-b border-teal-100 pb-5 mb-6 relative z-10">
-                    <div className="w-12 h-12 bg-teal-100 rounded-2xl flex items-center justify-center shadow-inner">
-                        <Gauge size={24} className="text-teal-600" />
+            <div className="card w-full relative border border-teal-100 shadow-lg bg-gradient-to-br from-teal-50/50 to-white overflow-hidden rounded-xl sm:rounded-[2rem] p-2.5 sm:p-6">
+                <div className="flex items-center gap-2 sm:gap-4 border-b border-teal-100 pb-2 sm:pb-5 mb-3 sm:mb-6">
+                    <div className="w-8 h-8 sm:w-12 sm:h-12 bg-teal-100 rounded-lg sm:rounded-2xl flex items-center justify-center shadow-inner shrink-0">
+                        <Gauge size={16} className="text-teal-600" />
                     </div>
-                    <div>
-                        <h3 className="text-xl font-black text-slate-800 tracking-tight m-0">Tank Dip Readings</h3>
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Manual &amp; Auto Measurement per Tank</p>
+                    <div className="min-w-0">
+                        <h3 className="text-sm sm:text-xl font-black text-slate-800 tracking-tight m-0">Tank Dip Readings</h3>
+                        <p className="text-[9px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mt-0.5 truncate text-wrap">Manual & Auto per Tank</p>
                     </div>
                 </div>
 
-                <div className="relative z-10 overflow-x-auto">
-                    <table className="w-full text-left min-w-[480px]">
+                <div className="overflow-x-auto hide-scrollbar -mx-1 sm:mx-0">
+                    <table className="w-full text-left min-w-[340px]">
                         <thead>
-                            <tr className="bg-teal-50/60 text-slate-400 text-[10px] uppercase font-bold tracking-widest border-b border-teal-100">
-                                <th className="py-3 px-5 text-left">Tank</th>
-                                <th className="py-3 px-5">Product</th>
-                                <th className="py-3 px-5"><FlaskConical size={12} className="inline mr-1" />Manual Dip (cm)</th>
-                                <th className="py-3 px-5"><Gauge size={12} className="inline mr-1" />Auto Dip (cm)</th>
-                                <th className="py-3 px-5 text-right">Difference</th>
+                            <tr className="bg-teal-50/60 text-slate-400 text-[8px] sm:text-[10px] uppercase font-bold tracking-widest border-b border-teal-100">
+                                <th className="py-2 px-2 sm:px-5">Tank</th>
+                                <th className="py-2 px-2 sm:px-5">Type</th>
+                                <th className="py-2 px-2 sm:px-5">Manual</th>
+                                <th className="py-2 px-2 sm:px-5">Auto</th>
+                                <th className="py-2 px-2 sm:px-5 text-right">Diff</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-teal-100/60">
                             {tankDips.map((td, i) => {
                                 const diff = td.autoDip - td.manualDip;
                                 return (
-                                    <tr key={td.tankName} className={`${i % 2 === 0 ? 'bg-white' : 'bg-teal-50/20'} hover:bg-teal-50/40 transition-colors`}>
-                                        <td className="py-3 px-5">
-                                            <span className="font-black text-slate-700 text-base">{td.tankName.split('-')[0]}</span>
+                                    <tr key={td.tankName} className={`${i % 2 === 0 ? 'bg-white' : 'bg-teal-50/20'}`}>
+                                        <td className="py-1.5 px-2 sm:px-5">
+                                            <span className="font-black text-slate-700 text-xs sm:text-base">{td.tankName.split('-')[0]}</span>
                                         </td>
-                                        <td className="py-3 px-5">
-                                            <span className={`px-2.5 py-1 rounded-md text-xs font-bold ring-1 ring-inset ${td.tankName.endsWith('HSD') ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200'}`}>
+                                        <td className="py-1.5 px-2 sm:px-5">
+                                            <span className={`px-1.5 py-0.5 rounded text-[8px] sm:text-xs font-bold ring-1 ring-inset ${td.tankName.endsWith('HSD') ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200'}`}>
                                                 {td.tankName.endsWith('HSD') ? 'HSD' : 'MS'}
                                             </span>
                                         </td>
-                                        <td className="py-2 px-5">
-                                            <input
-                                                type="number"
-                                                placeholder="0"
-                                                className="w-full py-2 px-3 bg-slate-100/80 rounded-lg text-slate-700 font-semibold focus:bg-white focus:ring-2 focus:ring-teal-400 focus:outline-none transition-all placeholder:text-slate-300"
+                                        <td className="py-1.5 px-1.5 sm:px-5">
+                                            <input type="number" inputMode="decimal" placeholder="0"
+                                                className="w-12 sm:w-full py-1 sm:py-2 px-1.5 sm:px-3 bg-slate-100/80 rounded-lg text-xs sm:text-sm text-slate-700 font-semibold focus:bg-white focus:ring-2 focus:ring-teal-400 focus:outline-none transition-all placeholder:text-slate-300"
                                                 value={td.manualDip === 0 ? '' : td.manualDip}
                                                 onChange={(e) => updateTankDip(td.tankName, 'manualDip', parseFloat(e.target.value) || 0)}
                                             />
                                         </td>
-                                        <td className="py-2 px-5">
-                                            <input
-                                                type="number"
-                                                placeholder="0"
-                                                className="w-full py-2 px-3 bg-slate-100/80 rounded-lg text-slate-700 font-semibold focus:bg-white focus:ring-2 focus:ring-teal-400 focus:outline-none transition-all placeholder:text-slate-300"
+                                        <td className="py-1.5 px-1.5 sm:px-5">
+                                            <input type="number" inputMode="decimal" placeholder="0"
+                                                className="w-12 sm:w-full py-1 sm:py-2 px-1.5 sm:px-3 bg-slate-100/80 rounded-lg text-xs sm:text-sm text-slate-700 font-semibold focus:bg-white focus:ring-2 focus:ring-teal-400 focus:outline-none transition-all placeholder:text-slate-300"
                                                 value={td.autoDip === 0 ? '' : td.autoDip}
                                                 onChange={(e) => updateTankDip(td.tankName, 'autoDip', parseFloat(e.target.value) || 0)}
                                             />
                                         </td>
-                                        <td className={`py-3 px-5 text-right font-bold ${Math.abs(diff) > 1 ? (diff < 0 ? 'text-red-500' : 'text-emerald-600') : 'text-slate-400'}`}>
-                                            {diff !== 0 ? `${diff > 0 ? '+' : ''}${diff.toFixed(1)} cm` : '-'}
+                                        <td className={`py-1.5 px-2 sm:px-5 text-right text-xs sm:text-sm font-bold ${Math.abs(diff) > 1 ? (diff < 0 ? 'text-red-500' : 'text-emerald-600') : 'text-slate-400'}`}>
+                                            {diff !== 0 ? `${diff > 0 ? '+' : ''}${diff.toFixed(1)}` : '-'}
                                         </td>
                                     </tr>
                                 );
@@ -762,87 +828,164 @@ function ShiftEntryContent() {
                 </div>
             </div>
 
-            {/* Grand Global Summary Context */}
-            <div className="card relative overflow-hidden bg-gradient-to-r from-blue-950 via-slate-900 to-slate-950 text-white shadow-2xl shadow-blue-900/40 border-none px-6 py-8 md:p-10 rounded-3xl group">
-                {/* Background Decor */}
-                <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500 rounded-full blur-[100px] opacity-20 group-hover:opacity-30 transition-opacity pointer-events-none"></div>
-                <div className="absolute bottom-0 left-0 w-64 h-64 bg-emerald-500 rounded-full blur-[100px] opacity-10 group-hover:opacity-20 transition-opacity pointer-events-none"></div>
+            {/* Fuel Receipt Section */}
+            <div className="card w-full relative border border-blue-100 shadow-lg bg-gradient-to-br from-blue-50/50 to-white overflow-hidden rounded-xl sm:rounded-[2rem] p-4 sm:p-6">
+                <div className="flex items-center gap-2 sm:gap-4 border-b border-blue-100 pb-3 sm:pb-5 mb-4 sm:mb-6">
+                    <div className="w-8 h-8 sm:w-12 sm:h-12 bg-blue-100 rounded-lg sm:rounded-2xl flex items-center justify-center shadow-inner shrink-0">
+                        <Truck size={18} className="text-blue-600 sm:w-6 sm:h-6" />
+                    </div>
+                    <div className="min-w-0">
+                        <h3 className="text-sm sm:text-xl font-black text-slate-800 tracking-tight m-0">Fuel Receipt</h3>
+                        <p className="text-[9px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mt-0.5 truncate text-wrap">Quantity loaded today</p>
+                    </div>
+                </div>
 
-                <div className="relative z-10 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-8">
+                <div className="grid grid-cols-2 gap-3 sm:gap-6">
+                    <div className="space-y-1.5 sm:space-y-2">
+                        <label className="flex items-center gap-1.5 text-[10px] sm:text-xs font-black text-emerald-600 uppercase tracking-widest ml-1">
+                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                            MS Petrol (Ltr)
+                        </label>
+                        <div className="relative group">
+                            <input
+                                type="number"
+                                inputMode="decimal"
+                                placeholder="0.00"
+                                className="w-full py-2.5 sm:py-4 px-3 sm:px-5 bg-slate-100/80 rounded-xl sm:rounded-2xl text-base sm:text-xl font-mono font-black text-slate-800 focus:bg-white focus:ring-4 focus:ring-emerald-400/20 focus:outline-none transition-all placeholder:text-slate-300"
+                                value={msReceipt === 0 ? '' : msReceipt}
+                                onChange={(e) => setMsReceipt(parseFloat(e.target.value) || 0)}
+                            />
+                        </div>
+                    </div>
+                    <div className="space-y-1.5 sm:space-y-2">
+                        <label className="flex items-center gap-1.5 text-[10px] sm:text-xs font-black text-amber-600 uppercase tracking-widest ml-1">
+                            <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></div>
+                            HSD Diesel (Ltr)
+                        </label>
+                        <div className="relative group">
+                            <input
+                                type="number"
+                                inputMode="decimal"
+                                placeholder="0.00"
+                                className="w-full py-2.5 sm:py-4 px-3 sm:px-5 bg-slate-100/80 rounded-xl sm:rounded-2xl text-base sm:text-xl font-mono font-black text-slate-800 focus:bg-white focus:ring-4 focus:ring-amber-400/20 focus:outline-none transition-all placeholder:text-slate-300"
+                                value={hsdReceipt === 0 ? '' : hsdReceipt}
+                                onChange={(e) => setHsdReceipt(parseFloat(e.target.value) || 0)}
+                            />
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Grand Global Summary */}
+            <div className="card relative overflow-hidden bg-gradient-to-r from-blue-950 via-slate-900 to-slate-950 text-white shadow-2xl shadow-blue-900/40 border-none px-4 py-6 sm:px-6 sm:py-8 md:p-10 rounded-2xl sm:rounded-3xl">
+                <div className="absolute top-0 right-0 w-40 sm:w-64 h-40 sm:h-64 bg-blue-500 rounded-full blur-[80px] sm:blur-[100px] opacity-20 pointer-events-none"></div>
+
+                <div className="relative z-10">
                     <div>
-                        <div className="inline-block px-3 py-1 mb-3 rounded-full bg-blue-500/20 text-blue-300 text-xs font-bold uppercase tracking-widest border border-blue-500/30">Verification Level</div>
-                        <h2 className="text-4xl font-black m-0 text-white tracking-tight">Grand Shift Summary</h2>
-                        <p className="text-blue-200 mt-2 font-medium max-w-md leading-relaxed">System-wide reconciliation across all machines and assigned operational sides to verify physical inventory against financial receipts.</p>
+                        <div className="inline-block px-2.5 sm:px-3 py-1 mb-2 sm:mb-3 rounded-full bg-blue-500/20 text-blue-300 text-[10px] sm:text-xs font-bold uppercase tracking-widest border border-blue-500/30">Summary</div>
+                        <h2 className="text-2xl sm:text-3xl lg:text-4xl font-black m-0 text-white tracking-tight">Grand Shift Summary</h2>
                     </div>
 
-                    <div className="bg-white/5 backdrop-blur-md p-6 rounded-2xl border border-white/10 w-full lg:w-xl shadow-inner">
-                        <div className="flex flex-wrap items-center gap-x-10 gap-y-6">
+                    <div className="bg-white/5 backdrop-blur-md p-3 sm:p-6 rounded-xl sm:rounded-2xl border border-white/10 w-full mt-3 sm:mt-6 shadow-inner">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-4">
                             <div>
-                                <div className="text-[10px] text-blue-300/80 font-bold uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><div className="w-1.5 h-1.5 bg-blue-400 rounded-full"></div> Total Liquid Disbursed</div>
-                                <div className="flex gap-4 text-xl font-medium text-white/80">
-                                    <span className="flex flex-col"><span className="text-[10px] text-emerald-400 uppercase tracking-widest font-bold">MS Fuel</span> <strong className="text-white font-black">{grandTotals.ms.toFixed(2)}L</strong></span>
-                                    <div className="w-px bg-white/10 my-1"></div>
-                                    <span className="flex flex-col"><span className="text-[10px] text-amber-400 uppercase tracking-widest font-bold">HSD Fuel</span> <strong className="text-white font-black">{grandTotals.hsd.toFixed(2)}L</strong></span>
-                                </div>
+                                <div className="text-[8px] sm:text-[10px] text-emerald-400 uppercase tracking-widest font-bold mb-0.5">MS Fuel</div>
+                                <div className="text-base sm:text-xl font-black text-white">{grandTotals.ms.toFixed(1)}L</div>
+                            </div>
+                            <div>
+                                <div className="text-[8px] sm:text-[10px] text-amber-400 uppercase tracking-widest font-bold mb-0.5">HSD Fuel</div>
+                                <div className="text-base sm:text-xl font-black text-white">{grandTotals.hsd.toFixed(1)}L</div>
+                            </div>
+                            <div className="col-span-1">
+                                <div className="text-[8px] sm:text-[10px] text-blue-300/80 uppercase tracking-widest font-bold mb-0.5">Exp Sale</div>
+                                <div className="text-lg sm:text-2xl lg:text-3xl font-black text-white">₹{grandTotals.amount.toFixed(0)}</div>
+                            </div>
+                            <div className="col-span-1">
+                                <div className="text-[8px] sm:text-[10px] text-amber-300/80 uppercase tracking-widest font-bold mb-0.5">Lube</div>
+                                <div className="text-base sm:text-xl font-black text-amber-400">₹{grandTotals.lube.toFixed(0)}</div>
                             </div>
 
-                            <div className="w-px h-16 bg-white/10 hidden md:block"></div>
-
-                            <div>
-                                <div className="text-[10px] text-blue-300/80 font-bold uppercase tracking-widest mb-1.5">Expected Cash</div>
-                                <div className="text-4xl font-black text-white tracking-tight">₹{grandTotals.amount.toFixed(2)}</div>
-                            </div>
-
-                            <div>
-                                <div className="text-[10px] text-amber-300/80 font-bold uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><Banknote size={12} /> Total Lube</div>
-                                <div className="text-2xl font-black text-amber-400 tracking-tight">₹{grandTotals.lube.toFixed(2)}</div>
-                            </div>
-
-                            {totalGhatti > 0 && <div className="w-px h-16 bg-white/10 hidden md:block"></div>}
                             {totalGhatti > 0 && <div>
-                                <div className="text-[10px] text-red-300/80 font-bold uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><AlertTriangle size={12} /> Total Ghatti</div>
-                                <div className="text-2xl font-black text-red-400 tracking-tight">₹{totalGhatti.toFixed(2)}</div>
+                                <div className="text-[8px] sm:text-[10px] text-red-300/80 uppercase tracking-widest font-bold mb-0.5 flex items-center gap-1"><AlertTriangle size={8} /> Ghatti</div>
+                                <div className="text-base sm:text-xl font-black text-red-400">₹{totalGhatti.toFixed(0)}</div>
                             </div>}
 
                             <div>
-                                <div className="text-[10px] text-emerald-300/80 font-bold uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><Banknote size={12} /> Handed Cash</div>
-                                <div className="text-2xl font-black text-emerald-400 tracking-tight">₹{totalCashGlobal.toFixed(2)}</div>
+                                <div className="text-[8px] sm:text-[10px] text-emerald-300/80 uppercase tracking-widest font-bold mb-0.5">Cash Rx</div>
+                                <div className="text-base sm:text-xl font-black text-emerald-400">₹{totalCashGlobal.toFixed(0)}</div>
                             </div>
                             <div>
-                                <div className="text-[10px] text-indigo-300/80 font-bold uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><CreditCard size={12} /> Received Digital</div>
-                                <div className="text-2xl font-black text-indigo-400 tracking-tight">₹{totalOnlineGlobal.toFixed(2)}</div>
+                                <div className="text-[8px] sm:text-[10px] text-indigo-300/80 uppercase tracking-widest font-bold mb-0.5">UPI Rx</div>
+                                <div className="text-base sm:text-xl font-black text-indigo-400">₹{totalOnlineGlobal.toFixed(0)}</div>
                             </div>
 
-                            <div className="w-px h-16 bg-white/10 hidden md:block"></div>
+                            {/* Owner Handover & Locker */}
+                            <div className="bg-slate-900/50 p-2 sm:p-4 rounded-lg sm:rounded-xl border border-slate-800">
+                                <div className="text-[8px] sm:text-[10px] text-rose-300/80 font-bold uppercase tracking-widest mb-0.5 flex items-center gap-1"><Banknote size={8} /> Handover</div>
+                                <div className="flex items-center text-rose-400 font-black text-sm sm:text-xl">
+                                    <span className="mr-0.5 text-[10px] sm:text-sm">₹</span>
+                                    <input type="number" inputMode="decimal" min="0" placeholder="0"
+                                        className="w-12 sm:w-20 bg-transparent border-0 border-b border-rose-500/30 p-0 text-rose-400 focus:ring-0 focus:border-rose-400 text-sm sm:text-xl font-black placeholder:text-rose-900/50 transition-colors"
+                                        value={cashToOwner === 0 ? '' : cashToOwner}
+                                        onChange={(e) => setCashToOwner(parseFloat(e.target.value) || 0)}
+                                    />
+                                </div>
+                            </div>
 
-                            <div>
-                                <div className="text-[10px] text-blue-300/80 font-bold uppercase tracking-widest mb-1.5">Net Discrepancy Margin</div>
-                                <div className={`px-4 py-2 rounded-xl text-3xl font-black border ${hasGlobalMismatch ? (globalDiff < 0 ? 'text-red-300 bg-red-900/30 border-red-500/30' : 'text-emerald-300 bg-emerald-900/30 border-emerald-500/30') : 'text-slate-300 bg-slate-800 border-slate-600/50'} shadow-sm`}>
-                                    {globalDiff > 0 ? '+' : ''}₹{globalDiff.toFixed(2)}
+                            <div className="bg-slate-900/50 p-2 sm:p-4 rounded-lg sm:rounded-xl border border-slate-800">
+                                <div className="text-[8px] sm:text-[10px] text-teal-300/80 font-bold uppercase tracking-widest mb-0.5 flex items-center gap-1"><Vault size={8} /> Locker</div>
+                                <div className="text-base sm:text-xl font-black text-teal-400">₹{(totalCashGlobal - cashToOwner).toFixed(0)}</div>
+                            </div>
+
+                            {/* Net Discrepancy */}
+                            <div className="col-span-2 sm:col-span-1">
+                                <div className="text-[8px] sm:text-[10px] text-blue-300/80 font-bold uppercase tracking-widest mb-0.5">Variance</div>
+                                <div className={`px-2 sm:px-4 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-base sm:text-2xl lg:text-3xl font-black border inline-block ${hasGlobalMismatch ? (globalDiff < 0 ? 'text-red-300 bg-red-900/30 border-red-500/30' : 'text-emerald-300 bg-emerald-900/30 border-emerald-500/30') : 'text-slate-300 bg-slate-800 border-slate-600/50'}`}>
+                                    {globalDiff > 0 ? '+' : ''}₹{globalDiff.toFixed(0)}
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <div className="mt-10 flex justify-end relative z-10 border-t border-white/10 pt-8">
+                {/* Desktop submit */}
+                <div className="mt-6 sm:mt-10 hidden sm:flex justify-end relative z-10 border-t border-white/10 pt-6 sm:pt-8">
                     <button
                         onClick={handleSubmit}
                         disabled={loading}
-                        className="bg-blue-600 hover:bg-blue-500 text-white pl-8 pr-10 py-5 rounded-2xl font-black text-xl shadow-xl shadow-blue-600/20 hover:shadow-blue-500/40 hover:-translate-y-1 flex items-center gap-4 transition-all duration-300 disabled:opacity-50 disabled:hover:translate-y-0 disabled:cursor-not-allowed group/btn focus:ring-4 focus:ring-blue-500/30 outline-none"
+                        className="bg-blue-600 hover:bg-blue-500 text-white pl-6 pr-8 py-4 rounded-xl sm:rounded-2xl font-black text-lg sm:text-xl shadow-xl shadow-blue-600/20 hover:shadow-blue-500/40 hover:-translate-y-1 flex items-center gap-3 sm:gap-4 transition-all duration-300 disabled:opacity-50 disabled:hover:translate-y-0 disabled:cursor-not-allowed focus:ring-4 focus:ring-blue-500/30 outline-none"
                     >
-                        {loading ? <Loader2 size={24} className="animate-spin" /> : <Save size={24} className="group-hover/btn:scale-110 transition-transform" />}
-                        {editId ? 'Update Modified Shift' : t('submitShift', language) + ' to Secure Ledger'}
+                        {loading ? <Loader2 size={22} className="animate-spin" /> : <Save size={22} />}
+                        {loading ? 'Submitting...' : 'Submit Shift Entry'}
                     </button>
                 </div>
+            </div>
+
+            {/* Mobile Fixed Bottom Submit Button */}
+            <div className="sm:hidden fixed bottom-0 left-0 right-0 z-50 p-3 bg-white/95 backdrop-blur-md border-t border-slate-200 safe-area-bottom">
+                <button
+                    onClick={handleSubmit}
+                    disabled={loading}
+                    className="w-full bg-blue-600 hover:bg-blue-500 text-white py-3.5 rounded-xl font-bold text-base shadow-lg shadow-blue-600/20 flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
+                >
+                    {loading ? <Loader2 size={20} className="animate-spin" /> : <Save size={20} />}
+                    {loading ? 'Submitting...' : 'Submit Shift'}
+                </button>
             </div>
         </div>
     );
 }
 
-export default function ShiftEntry() {
+export default function ShiftEntryPage() {
     return (
-        <Suspense fallback={<div className="p-20 flex justify-center"><Loader2 className="animate-spin text-blue-500" size={40} /></div>}>
+        <Suspense fallback={
+            <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+                <div className="flex flex-col items-center gap-4">
+                    <Loader2 size={48} className="text-blue-500 animate-spin" />
+                    <p className="text-slate-500 font-medium">Loading shift system...</p>
+                </div>
+            </div>
+        }>
             <ShiftEntryContent />
         </Suspense>
     );

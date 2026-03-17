@@ -1,13 +1,16 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import ClientWrapper from '@/components/ClientWrapper';
 import InstallPrompt from '@/components/InstallPrompt';
+
+export const viewport: Viewport = {
+  themeColor: '#2563eb',
+};
 
 export const metadata: Metadata = {
   title: 'Fuel Station System',
   description: 'Fuel Station Shift & DSR Management System',
   manifest: '/manifest.json',
-  themeColor: '#2563eb',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',

@@ -26,7 +26,7 @@ export default function AdminDashboard() {
     const [totalMismatch, setTotalMismatch] = useState(0);
 
     // UI State
-    const [activeTab, setActiveTab] = useState<'total' | 'month' | 'history' | 'date'>('month');
+    const [activeTab, setActiveTab] = useState<'total' | 'month' | 'history' | 'date'>('date');
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
 
     useEffect(() => {
@@ -66,7 +66,7 @@ export default function AdminDashboard() {
                 const { data: approvedData, error: approvedErr } = await supabase
                     .from('shifts')
                     .select(`
-                        id, shift_date,
+                        id, shift_date, shift_number,
                         shift_sides ( cash_received, online_received, lube_sales ),
                         shift_entries ( products(name), sale_qty, amount )
                     `)
@@ -132,6 +132,22 @@ export default function AdminDashboard() {
         return aggregateShifts(filtered);
     }, [allShifts, selectedDate]);
 
+    // Shift-wise breakdown for selected date
+    const shiftWiseStats = useMemo(() => {
+        const filtered = allShifts.filter(s => s.shift_date === selectedDate);
+        const grouped: Record<number, any[]> = {};
+        filtered.forEach(s => {
+            const sn = s.shift_number || 0;
+            if (!grouped[sn]) grouped[sn] = [];
+            grouped[sn].push(s);
+        });
+        const sortedKeys = Object.keys(grouped).map(Number).sort((a, b) => a - b);
+        return sortedKeys.map(sn => ({
+            shiftNumber: sn,
+            stats: aggregateShifts(grouped[sn])
+        }));
+    }, [allShifts, selectedDate]);
+
     // Group past months
     const historyMonths = useMemo(() => {
         const grouped: Record<string, any[]> = {};
@@ -190,84 +206,79 @@ export default function AdminDashboard() {
 
     // Reusable Stats Grid Component
     const StatsGrid = ({ stats, title }: { stats: any, title?: string }) => (
-        <div className="space-y-6 animate-fade-in">
-            {title && <h3 className="text-lg font-bold text-slate-800 tracking-tight">{title}</h3>}
+        <div className="space-y-4 sm:space-y-6 animate-fade-in">
+            {title && <h3 className="text-base sm:text-lg font-bold text-slate-800 tracking-tight">{title}</h3>}
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-6">
                 {/* Total Sales */}
-                <div className="bg-gradient-to-br from-indigo-50 to-blue-50/50 p-6 rounded-2xl border border-indigo-100 shadow-sm">
-                    <div className="flex justify-between items-start mb-4">
-                        <div className="text-sm font-bold text-indigo-800/60 uppercase tracking-widest">Total Sales</div>
+                <div className="col-span-2 md:col-span-1 bg-gradient-to-br from-indigo-50 to-blue-50/50 p-4 sm:p-6 rounded-xl sm:rounded-2xl border border-indigo-100 shadow-sm">
+                    <div className="flex justify-between items-start mb-2 sm:mb-4">
+                        <div className="text-[10px] sm:text-sm font-bold text-indigo-800/60 uppercase tracking-widest">Total Sales</div>
                         <div className="p-2 bg-indigo-100/50 rounded-lg text-indigo-600"><IndianRupee size={18} /></div>
                     </div>
-                    <div className="text-3xl font-black text-indigo-900 tracking-tight">₹{stats.totalSale.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                    <div className="text-xl sm:text-3xl font-black text-indigo-900 tracking-tight">₹{stats.totalSale.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
                 </div>
 
                 {/* Online Collection */}
-                <div className="bg-gradient-to-br from-purple-50 to-fuchsia-50/50 p-6 rounded-2xl border border-purple-100 shadow-sm">
-                    <div className="flex justify-between items-start mb-4">
-                        <div className="text-sm font-bold text-purple-800/60 uppercase tracking-widest">Online Col.</div>
+                <div className="bg-gradient-to-br from-purple-50 to-fuchsia-50/50 p-4 sm:p-6 rounded-xl sm:rounded-2xl border border-purple-100 shadow-sm">
+                    <div className="flex justify-between items-start mb-2 sm:mb-4">
+                        <div className="text-[10px] sm:text-sm font-bold text-purple-800/60 uppercase tracking-widest">Online</div>
                         <div className="p-2 bg-purple-100/50 rounded-lg text-purple-600"><CreditCard size={18} /></div>
                     </div>
-                    <div className="text-3xl font-black text-purple-900 tracking-tight">₹{stats.online.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                    <div className="text-xl sm:text-3xl font-black text-purple-900 tracking-tight">₹{stats.online.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
                 </div>
 
                 {/* Cash Collection */}
-                <div className="bg-gradient-to-br from-emerald-50 to-teal-50/50 p-6 rounded-2xl border border-emerald-100 shadow-sm">
-                    <div className="flex justify-between items-start mb-4">
-                        <div className="text-sm font-bold text-emerald-800/60 uppercase tracking-widest">Cash Col.</div>
+                <div className="bg-gradient-to-br from-emerald-50 to-teal-50/50 p-4 sm:p-6 rounded-xl sm:rounded-2xl border border-emerald-100 shadow-sm">
+                    <div className="flex justify-between items-start mb-2 sm:mb-4">
+                        <div className="text-[10px] sm:text-sm font-bold text-emerald-800/60 uppercase tracking-widest">Cash</div>
                         <div className="p-2 bg-emerald-100/50 rounded-lg text-emerald-600"><Banknote size={18} /></div>
                     </div>
-                    <div className="text-3xl font-black text-emerald-900 tracking-tight">₹{stats.cash.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                    <div className="text-xl sm:text-3xl font-black text-emerald-900 tracking-tight">₹{stats.cash.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                {/* MS Sold */}
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+            <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-6">
+                <div className="bg-white p-3 sm:p-6 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
                     <div>
-                        <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">MS (Petrol)</div>
-                        <div className="text-xl font-bold text-slate-800">{stats.msVol.toLocaleString('en-IN', { maximumFractionDigits: 1 })} <span className="text-sm font-normal text-slate-500">Ltrs</span></div>
+                        <div className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">MS (Petrol)</div>
+                        <div className="text-base sm:text-xl font-bold text-slate-800">{stats.msVol.toLocaleString('en-IN', { maximumFractionDigits: 1 })} <span className="text-[10px] sm:text-sm font-normal text-slate-500">L</span></div>
                     </div>
-                    <div className="w-12 h-12 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-500"><Fuel size={20} /></div>
+                    <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-full bg-emerald-50 flex items-center justify-center text-emerald-500 shrink-0"><Fuel size={16} /></div>
                 </div>
-
-                {/* HSD Sold */}
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div className="bg-white p-3 sm:p-6 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
                     <div>
-                        <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">HSD (Diesel)</div>
-                        <div className="text-xl font-bold text-slate-800">{stats.hsdVol.toLocaleString('en-IN', { maximumFractionDigits: 1 })} <span className="text-sm font-normal text-slate-500">Ltrs</span></div>
+                        <div className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">HSD (Diesel)</div>
+                        <div className="text-base sm:text-xl font-bold text-slate-800">{stats.hsdVol.toLocaleString('en-IN', { maximumFractionDigits: 1 })} <span className="text-[10px] sm:text-sm font-normal text-slate-500">L</span></div>
                     </div>
-                    <div className="w-12 h-12 rounded-full bg-amber-50 flex items-center justify-center text-amber-500"><Fuel size={20} /></div>
+                    <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-full bg-amber-50 flex items-center justify-center text-amber-500 shrink-0"><Fuel size={16} /></div>
                 </div>
-
-                {/* Lube Sold */}
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div className="col-span-2 lg:col-span-1 bg-white p-3 sm:p-6 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
                     <div>
-                        <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Lube Sales</div>
-                        <div className="text-xl font-bold text-slate-800">₹{stats.lube.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                        <div className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Lube Sales</div>
+                        <div className="text-base sm:text-xl font-bold text-slate-800">₹{stats.lube.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
                     </div>
-                    <div className="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center text-blue-500"><Droplet size={20} /></div>
+                    <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-full bg-blue-50 flex items-center justify-center text-blue-500 shrink-0"><Droplet size={16} /></div>
                 </div>
             </div>
         </div>
     );
 
     return (
-        <div className="max-w-6xl mx-auto space-y-8 pb-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <h1 className="text-2xl sm:text-3xl font-black text-slate-800 m-0 tracking-tight">Admin {t('dashboard', language)}</h1>
+        <div className="max-w-6xl mx-auto space-y-5 sm:space-y-8 pb-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
+                <h1 className="text-xl sm:text-2xl md:text-3xl font-black text-slate-800 m-0 tracking-tight">Admin {t('dashboard', language)}</h1>
 
                 {/* Pending Quick Metrics */}
                 {pending.length > 0 && (
-                    <a href="#pending-approvals" className="flex items-center gap-4 bg-amber-50 border border-amber-200 py-2 px-4 rounded-xl shadow-sm hover:bg-amber-100 transition-colors">
-                        <div className="flex items-center gap-2 text-amber-700 font-bold">
-                            <AlertTriangle size={18} className="animate-pulse" />
-                            <span>{pending.length} Pending Approval{pending.length > 1 ? 's' : ''}</span>
+                    <a href="#pending-approvals" className="flex items-center gap-2 sm:gap-4 bg-amber-50 border border-amber-200 py-1.5 sm:py-2 px-3 sm:px-4 rounded-lg sm:rounded-xl shadow-sm hover:bg-amber-100 transition-colors text-sm">
+                        <div className="flex items-center gap-1.5 sm:gap-2 text-amber-700 font-bold">
+                            <AlertTriangle size={16} className="animate-pulse shrink-0" />
+                            <span className="text-xs sm:text-sm">{pending.length} Pending</span>
                         </div>
-                        <div className="w-px h-6 bg-amber-200"></div>
-                        <div className={`font-bold ${totalMismatch < 0 ? 'text-red-500' : totalMismatch > 0 ? 'text-emerald-600' : 'text-slate-500'}`}>
-                            {totalMismatch !== 0 ? `Diff: ₹${Math.abs(totalMismatch).toFixed(0)}` : 'Matches OK'}
+                        <div className="w-px h-5 bg-amber-200"></div>
+                        <div className={`font-bold text-xs sm:text-sm ${totalMismatch < 0 ? 'text-red-500' : totalMismatch > 0 ? 'text-emerald-600' : 'text-slate-500'}`}>
+                            {totalMismatch !== 0 ? `₹${Math.abs(totalMismatch).toFixed(0)}` : 'OK'}
                         </div>
                     </a>
                 )}
@@ -276,48 +287,48 @@ export default function AdminDashboard() {
             {loading ? (
                 <div className="flex justify-center items-center py-32"><Loader2 className="animate-spin text-blue-500" size={48} /></div>
             ) : (
-                <div className="space-y-8">
+                <div className="space-y-4 sm:space-y-8">
                     {/* Navigation Tabs */}
-                    <div className="flex overflow-x-auto hide-scrollbar bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm gap-1">
+                    <div className="flex overflow-x-auto hide-scrollbar bg-white p-1 sm:p-1.5 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm gap-0.5 sm:gap-1">
                         <button
                             onClick={() => setActiveTab('total')}
-                            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold whitespace-nowrap transition-all ${activeTab === 'total' ? 'bg-indigo-500 text-white shadow-md shadow-indigo-500/20' : 'text-slate-500 hover:bg-slate-50'}`}
+                            className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold whitespace-nowrap transition-all min-h-[36px] ${activeTab === 'total' ? 'bg-indigo-500 text-white shadow-md shadow-indigo-500/20' : 'text-slate-500 hover:bg-slate-50'}`}
                         >
-                            <Database size={16} /> All-Time Totals
+                            <Database size={14} /> <span className="hidden sm:inline">All-Time</span> Totals
                         </button>
                         <button
                             onClick={() => setActiveTab('month')}
-                            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold whitespace-nowrap transition-all ${activeTab === 'month' ? 'bg-blue-500 text-white shadow-md shadow-blue-500/20' : 'text-slate-500 hover:bg-slate-50'}`}
+                            className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold whitespace-nowrap transition-all min-h-[36px] ${activeTab === 'month' ? 'bg-blue-500 text-white shadow-md shadow-blue-500/20' : 'text-slate-500 hover:bg-slate-50'}`}
                         >
-                            <TrendingUp size={16} /> Current Month
+                            <TrendingUp size={14} /> Month
                         </button>
                         <button
                             onClick={() => setActiveTab('date')}
-                            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold whitespace-nowrap transition-all ${activeTab === 'date' ? 'bg-purple-500 text-white shadow-md shadow-purple-500/20' : 'text-slate-500 hover:bg-slate-50'}`}
+                            className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold whitespace-nowrap transition-all min-h-[36px] ${activeTab === 'date' ? 'bg-purple-500 text-white shadow-md shadow-purple-500/20' : 'text-slate-500 hover:bg-slate-50'}`}
                         >
-                            <Calendar size={16} /> Specific Date
+                            <Calendar size={14} /> Date
                         </button>
                         <button
                             onClick={() => setActiveTab('history')}
-                            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold whitespace-nowrap transition-all ${activeTab === 'history' ? 'bg-slate-800 text-white shadow-md shadow-slate-800/20' : 'text-slate-500 hover:bg-slate-50'}`}
+                            className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold whitespace-nowrap transition-all min-h-[36px] ${activeTab === 'history' ? 'bg-slate-800 text-white shadow-md shadow-slate-800/20' : 'text-slate-500 hover:bg-slate-50'}`}
                         >
-                            <History size={16} /> Past Months
+                            <History size={14} /> History
                         </button>
                     </div>
 
                     {/* Stats Display Area */}
-                    <div className="bg-slate-50/50 p-6 md:p-8 rounded-[2rem] border border-slate-100">
+                    <div className="bg-slate-50/50 p-2.5 sm:p-6 md:p-8 rounded-xl sm:rounded-[2rem] border border-slate-100">
                         {activeTab !== 'history' ? (
-                            <div className="space-y-6">
+                            <div className="space-y-4 sm:space-y-6">
                                 {/* Date Picker shown only on 'date' tab */}
                                 {activeTab === 'date' && (
-                                    <div className="flex items-center gap-4 bg-white p-3 rounded-2xl border border-purple-100 shadow-sm shadow-purple-500/5 max-w-sm mb-8 animate-fade-in">
-                                        <div className="p-2 bg-purple-50 rounded-xl text-purple-500"><Calendar size={20} /></div>
-                                        <div className="flex-1">
-                                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none mb-1">Select Date</div>
+                                    <div className="flex items-center gap-3 bg-white p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border border-purple-100 shadow-sm shadow-purple-500/5 max-w-xs sm:max-w-sm mb-4 sm:mb-8 animate-fade-in">
+                                        <div className="p-1.5 sm:p-2 bg-purple-50 rounded-lg sm:rounded-xl text-purple-500"><Calendar size={16} /></div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none mb-0.5">Select Date</div>
                                             <input
                                                 type="date"
-                                                className="bg-transparent border-0 p-0 text-slate-800 font-bold focus:ring-0 cursor-pointer w-full outline-none"
+                                                className="bg-transparent border-0 p-0 text-sm sm:text-base text-slate-800 font-bold focus:ring-0 cursor-pointer w-full outline-none"
                                                 value={selectedDate}
                                                 onChange={(e) => setSelectedDate(e.target.value)}
                                             />
@@ -325,40 +336,92 @@ export default function AdminDashboard() {
                                     </div>
                                 )}
 
-                                <div className="flex items-center gap-3 mb-6">
-                                    {activeTab === 'total' && <Database className="text-indigo-500" size={24} />}
-                                    {activeTab === 'month' && <TrendingUp className="text-blue-500" size={24} />}
-                                    {activeTab === 'date' && <Clock className="text-purple-500" size={24} />}
-                                    <h2 className="text-xl font-black text-slate-800 m-0">
-                                        {activeTab === 'total' ? 'Platform Lifetime Statistics' : activeTab === 'month' ? `Statistics for ${format(new Date(), 'MMMM yyyy')}` : `Statistics for ${format(parseISO(selectedDate), 'dd MMM yyyy')}`}
+                                <div className="flex items-center gap-2 sm:gap-3 mb-3 sm:mb-6">
+                                    {activeTab === 'total' && <Database className="text-indigo-500 shrink-0" size={18} />}
+                                    {activeTab === 'month' && <TrendingUp className="text-blue-500 shrink-0" size={18} />}
+                                    {activeTab === 'date' && <Clock className="text-purple-500 shrink-0" size={18} />}
+                                    <h2 className="text-base sm:text-xl font-black text-slate-800 m-0 truncate">
+                                        {activeTab === 'total' ? 'Lifetime Stats' : activeTab === 'month' ? `${format(new Date(), 'MMM yyyy')}` : `${format(parseISO(selectedDate), 'dd MMM yyyy')}`}
                                     </h2>
                                 </div>
 
                                 {activeStats.totalSale === 0 ? (
-                                    <div className="py-12 text-center bg-white rounded-2xl border border-slate-200">
-                                        <div className="inline-flex w-16 h-16 rounded-full bg-slate-50 items-center justify-center text-slate-300 mb-4"><Database size={24} /></div>
-                                        <h3 className="text-lg font-bold text-slate-700">No Data Available</h3>
-                                        <p className="text-slate-500">There are no approved shifts for this period.</p>
+                                    <div className="py-8 sm:py-12 text-center bg-white rounded-xl sm:rounded-2xl border border-slate-200">
+                                        <div className="inline-flex w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-slate-50 items-center justify-center text-slate-300 mb-3 sm:mb-4"><Database size={20} /></div>
+                                        <h3 className="text-sm sm:text-lg font-bold text-slate-700">No Data</h3>
+                                        <p className="text-xs sm:text-sm text-slate-500">No approved shifts for this period.</p>
                                     </div>
                                 ) : (
-                                    <StatsGrid stats={activeStats} />
+                                    <>
+                                        <StatsGrid stats={activeStats} />
+
+                                        {/* Shift-Wise Breakdown — only on date tab */}
+                                        {activeTab === 'date' && shiftWiseStats.length > 0 && (
+                                            <div className="mt-6 sm:mt-8 space-y-4 sm:space-y-6 animate-fade-in">
+                                                <h3 className="text-base sm:text-lg font-black text-slate-800 tracking-tight flex items-center gap-2">
+                                                    <Clock size={18} className="text-purple-500" />
+                                                    Shift-Wise Breakdown
+                                                </h3>
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
+                                                    {shiftWiseStats.map(sw => (
+                                                        <div key={sw.shiftNumber} className="bg-white p-4 sm:p-6 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                                                            <div className="flex items-center gap-2 mb-4">
+                                                                <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-purple-100 flex items-center justify-center text-purple-700 font-black text-sm sm:text-base">
+                                                                    S{sw.shiftNumber}
+                                                                </div>
+                                                                <div>
+                                                                    <div className="text-sm sm:text-base font-bold text-slate-800">Shift {sw.shiftNumber}</div>
+                                                                    <div className="text-[10px] text-slate-400 uppercase tracking-widest font-bold">Approved</div>
+                                                                </div>
+                                                            </div>
+                                                            <div className="grid grid-cols-2 gap-3">
+                                                                <div>
+                                                                    <div className="text-[9px] sm:text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-0.5">Total Sale</div>
+                                                                    <div className="text-base sm:text-lg font-black text-slate-800">₹{sw.stats.totalSale.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                                                                </div>
+                                                                <div>
+                                                                    <div className="text-[9px] sm:text-[10px] text-emerald-500 uppercase tracking-widest font-bold mb-0.5">Cash</div>
+                                                                    <div className="text-base sm:text-lg font-black text-emerald-700">₹{sw.stats.cash.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                                                                </div>
+                                                                <div>
+                                                                    <div className="text-[9px] sm:text-[10px] text-purple-500 uppercase tracking-widest font-bold mb-0.5">Online</div>
+                                                                    <div className="text-base sm:text-lg font-black text-purple-700">₹{sw.stats.online.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                                                                </div>
+                                                                <div>
+                                                                    <div className="text-[9px] sm:text-[10px] text-amber-500 uppercase tracking-widest font-bold mb-0.5">Lube</div>
+                                                                    <div className="text-base sm:text-lg font-black text-amber-700">₹{sw.stats.lube.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                                                                </div>
+                                                                <div>
+                                                                    <div className="text-[9px] sm:text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-0.5">MS</div>
+                                                                    <div className="text-sm font-bold text-slate-600">{sw.stats.msVol.toLocaleString('en-IN', { maximumFractionDigits: 1 })} L</div>
+                                                                </div>
+                                                                <div>
+                                                                    <div className="text-[9px] sm:text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-0.5">HSD</div>
+                                                                    <div className="text-sm font-bold text-slate-600">{sw.stats.hsdVol.toLocaleString('en-IN', { maximumFractionDigits: 1 })} L</div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </>
                                 )}
                             </div>
                         ) : (
-                            <div className="space-y-12 animate-fade-in">
-                                <div className="flex items-center gap-3 mb-2">
-                                    <History className="text-slate-800" size={24} />
-                                    <h2 className="text-xl font-black text-slate-800 m-0">Historical Monthly Breakdown</h2>
+                            <div className="space-y-6 sm:space-y-12 animate-fade-in">
+                                <div className="flex items-center gap-2 sm:gap-3 mb-2">
+                                    <History className="text-slate-800 shrink-0" size={18} />
+                                    <h2 className="text-base sm:text-xl font-black text-slate-800 m-0">Monthly History</h2>
                                 </div>
                                 {historyMonths.length === 0 ? (
-                                    <p className="text-slate-500">No historical data available yet.</p>
+                                    <p className="text-sm text-slate-500">No historical data available yet.</p>
                                 ) : (
                                     historyMonths.map((hm, idx) => (
                                         <div key={idx} className="relative">
-                                            {/* Decorative timeline line */}
-                                            {idx !== historyMonths.length - 1 && <div className="absolute left-6 top-16 bottom-[-3rem] w-px bg-slate-200 z-0"></div>}
+                                            {idx !== historyMonths.length - 1 && <div className="absolute left-6 top-16 bottom-[-3rem] w-px bg-slate-200 z-0 hidden sm:block"></div>}
 
-                                            <div className="relative z-10 bg-white p-6 md:p-8 rounded-[2rem] border border-slate-200 shadow-sm shadow-slate-100">
+                                            <div className="relative z-10 bg-white p-3 sm:p-6 md:p-8 rounded-xl sm:rounded-[2rem] border border-slate-200 shadow-sm shadow-slate-100">
                                                 <StatsGrid stats={hm.stats} title={hm.monthLabel} />
                                             </div>
                                         </div>
@@ -371,11 +434,13 @@ export default function AdminDashboard() {
             )}
 
             {/* Pending Approvals Table */}
-            <div id="pending-approvals" className="card p-0 overflow-hidden shadow-sm mt-12">
-                <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
-                    <h2 className="text-lg font-semibold text-slate-800 m-0">Action Required: {t('pendingApprovals', language)}</h2>
+            <div id="pending-approvals" className="card p-0 overflow-hidden shadow-sm mt-8 sm:mt-12">
+                <div className="p-4 sm:p-6 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+                    <h2 className="text-base sm:text-lg font-semibold text-slate-800 m-0">{t('pendingApprovals', language)}</h2>
                 </div>
-                <div className="overflow-x-auto">
+
+                {/* Desktop Table */}
+                <div className="hidden sm:block overflow-x-auto">
                     <table className="w-full text-left text-sm whitespace-nowrap">
                         <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
                             <tr>
@@ -421,6 +486,31 @@ export default function AdminDashboard() {
                             )}
                         </tbody>
                     </table>
+                </div>
+
+                {/* Mobile Card List */}
+                <div className="sm:hidden divide-y divide-slate-100">
+                    {loading && <div className="text-center py-8 text-slate-500">Loading...</div>}
+                    {!loading && pending.map(s => (
+                        <div key={s.id} className="p-4 space-y-2">
+                            <div className="flex justify-between items-start">
+                                <div>
+                                    <div className="text-sm font-bold text-slate-800">{s.date} · Shift {s.shift}</div>
+                                    <div className="text-xs text-slate-500 mt-0.5">{s.manager}</div>
+                                </div>
+                                <Link href={`/shift/review/${s.id}`} className="btn btn-primary py-1.5 px-3 text-xs">Review</Link>
+                            </div>
+                            <div className="flex gap-4 text-xs">
+                                <span className="text-slate-600">Total: <strong>₹{s.total.toLocaleString('en-IN')}</strong></span>
+                                <span className={s.diff < 0 ? 'text-red-500 font-bold' : s.diff > 0 ? 'text-emerald-600 font-bold' : 'text-slate-400'}>
+                                    Diff: {s.diff !== 0 ? `₹${s.diff.toLocaleString('en-IN')}` : '-'}
+                                </span>
+                            </div>
+                        </div>
+                    ))}
+                    {!loading && pending.length === 0 && (
+                        <div className="text-center py-8 text-slate-500">No pending approvals</div>
+                    )}
                 </div>
             </div>
         </div>

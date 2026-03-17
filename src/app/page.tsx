@@ -72,17 +72,17 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-[80vh] flex flex-col items-center justify-center p-4">
-      <div className="text-center mb-10 max-w-lg">
-        <h1 className="text-4xl md:text-5xl font-extrabold text-slate-800 mb-4 tracking-tight">
+    <div className="min-h-[100dvh] flex flex-col items-center justify-center px-4 py-8 safe-area-bottom">
+      <div className="text-center mb-6 sm:mb-10 max-w-lg">
+        <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-slate-800 mb-3 sm:mb-4 tracking-tight">
           Fuel Station <span className="text-blue-600">DSR</span>
         </h1>
       </div>
 
-      <div className="w-full max-w-md card p-8 shadow-xl shadow-blue-900/5 border-t-4 border-t-blue-500">
+      <div className="w-full max-w-md card p-5 sm:p-8 shadow-xl shadow-blue-900/5 border-t-4 border-t-blue-500">
 
         {/* Role Toggle */}
-        <div className="flex p-1 bg-slate-100 rounded-lg mb-8">
+        <div className="flex p-1 bg-slate-100 rounded-lg mb-6 sm:mb-8">
           <button
             type="button"
             className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold rounded-md transition-all ${role === 'Manager'
@@ -105,7 +105,7 @@ export default function Home() {
           </button>
         </div>
 
-        <form onSubmit={handleLogin} className="space-y-5">
+        <form onSubmit={handleLogin} className="space-y-4 sm:space-y-5">
           {error && (
             <div className="p-3 bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg flex items-start gap-2">
               <AlertCircle size={16} className="mt-0.5 shrink-0" />
@@ -113,25 +113,25 @@ export default function Home() {
             </div>
           )}
 
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             <label className="text-sm font-medium text-slate-700">Email Address</label>
             <input
               type="email"
               required
               placeholder={role === 'Manager' ? 'manager@gmail.com' : 'admin@gmail.com'}
-              className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-800 bg-slate-50"
+              className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-800 bg-slate-50 text-base"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
           </div>
 
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             <label className="text-sm font-medium text-slate-700">Password</label>
             <input
               type="password"
               required
               placeholder="Enter your password"
-              className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-800 bg-slate-50"
+              className="w-full px-4 py-3 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-800 bg-slate-50 text-base"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
@@ -140,7 +140,7 @@ export default function Home() {
           <button
             type="submit"
             disabled={loading}
-            className={`w-full py-3.5 px-4 rounded-lg text-white font-bold text-lg flex items-center justify-center gap-2 transition-all shadow-lg hover:-translate-y-0.5 disabled:opacity-70 disabled:hover:translate-y-0 ${role === 'Admin'
+            className={`w-full py-3.5 px-4 rounded-lg text-white font-bold text-base sm:text-lg flex items-center justify-center gap-2 transition-all shadow-lg hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-70 disabled:hover:translate-y-0 min-h-[48px] ${role === 'Admin'
               ? 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-500/30'
               : 'bg-blue-600 hover:bg-blue-700 shadow-blue-500/30'
               }`}

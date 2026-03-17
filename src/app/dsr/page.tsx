@@ -77,7 +77,7 @@ export default function DsrReport() {
                 const { data: shifts } = await supabase
                     .from('shifts')
                     .select(`
-            id, shift_date, shift_number,
+            id, shift_date, shift_number, ms_receipt, hsd_receipt,
             shift_entries ( nozzle_no, opening_meter, testing_qty ),
             shift_tanks ( tank_name, manual_dip )
           `)
@@ -209,6 +209,10 @@ export default function DsrReport() {
             const hsd2Vol = dipToLiters(dip2HSD);
             const hsdOpenStock = hsd1Vol + hsd2Vol;
 
+            // Fuel receipts from all shifts on this day
+            const msReceipt = allShifts.reduce((sum: number, s: any) => sum + (parseFloat(s.ms_receipt) || 0), 0);
+            const hsdReceipt = allShifts.reduce((sum: number, s: any) => sum + (parseFloat(s.hsd_receipt) || 0), 0);
+
             // Advance rolling baseline for next day
             prevMeters = { ...prevMeters, ...currentMeters };
 
@@ -216,7 +220,7 @@ export default function DsrReport() {
                 date: day.date,
                 hasData: true,
                 // Petrol DIP
-                dipMS, msOpenStock, msReceipt: 0, msTotalStock: msOpenStock,
+                dipMS, msOpenStock, msReceipt, msTotalStock: msOpenStock + msReceipt,
                 // Petrol DSR (S1 opening meters)
                 msD1: getOpen('Front-3'),
                 msD2: getOpen('Front-4'),
@@ -225,7 +229,7 @@ export default function DsrReport() {
                 msTesting, msSaleVol, cumPetrol,
                 // Diesel DIP
                 dip1HSD, hsd1Vol, dip2HSD, hsd2Vol,
-                hsdOpenStock, hsdReceipt: 0, hsdTotalStock: hsdOpenStock,
+                hsdOpenStock, hsdReceipt, hsdTotalStock: hsdOpenStock + hsdReceipt,
                 // Diesel DSR (S1 opening meters)
                 hsdD1: getOpen('Front-1'),
                 hsdD2: getOpen('Front-2'),
@@ -244,22 +248,22 @@ export default function DsrReport() {
     const tdLabel = "py-1.5 px-2 text-xs border border-slate-200 font-bold text-slate-700";
 
     return (
-        <div className="max-w-full mx-auto space-y-6 pb-20">
+        <div className="max-w-full mx-auto space-y-4 sm:space-y-6 pb-20">
             {/* Header */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
-                <h1 className="text-2xl font-black text-slate-800 m-0 flex items-center gap-3 tracking-tight">
-                    <span className="bg-blue-600 text-white p-2 rounded-xl shadow-md"><FileSpreadsheet size={22} /></span>
-                    Monthly DSR Report
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 bg-white p-3 sm:p-4 rounded-xl sm:rounded-2xl shadow-sm border border-slate-200">
+                <h1 className="text-lg sm:text-2xl font-black text-slate-800 m-0 flex items-center gap-2 sm:gap-3 tracking-tight">
+                    <span className="bg-blue-600 text-white p-1.5 sm:p-2 rounded-lg sm:rounded-xl shadow-md"><FileSpreadsheet size={18} /></span>
+                    Monthly DSR
                 </h1>
-                <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-4 py-2 rounded-xl">
-                        <Calendar size={16} className="text-slate-400" />
-                        <input type="month" className="bg-transparent border-0 p-0 text-slate-700 font-bold focus:ring-0 cursor-pointer"
+                <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
+                    <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 sm:px-4 py-2 rounded-lg sm:rounded-xl flex-1 sm:flex-initial">
+                        <Calendar size={14} className="text-slate-400" />
+                        <input type="month" className="bg-transparent border-0 p-0 text-slate-700 font-bold focus:ring-0 cursor-pointer text-sm sm:text-base min-w-0"
                             value={month} onChange={(e) => setMonth(e.target.value)} />
                     </div>
                     <button onClick={() => generatePDF('dsr-receipt', `DSR_${month}`)} disabled={!hasData}
-                        className="btn btn-primary shadow-lg shadow-blue-500/20 flex items-center gap-2 py-2 px-5 disabled:opacity-50">
-                        <Download size={16} /> PDF
+                        className="btn btn-primary shadow-lg shadow-blue-500/20 flex items-center gap-2 py-2 px-3 sm:px-5 disabled:opacity-50 text-sm shrink-0">
+                        <Download size={14} /> PDF
                     </button>
                 </div>
             </div>
@@ -280,14 +284,14 @@ export default function DsrReport() {
             )}
 
             {!loading && hasData && (
-                <div id="dsr-receipt" className="bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden">
-                    <div className="text-center py-6 border-b border-slate-200 bg-slate-50">
-                        <h2 className="text-2xl font-black text-slate-800 tracking-widest uppercase m-0">Maa Lakshmi Fuel Station</h2>
-                        <p className="text-slate-500 font-medium uppercase tracking-widest text-xs mt-1">Monthly Daily Sales Report — {monthLabel}</p>
+                <div id="dsr-receipt" className="bg-white rounded-xl sm:rounded-2xl shadow-xl border border-slate-100 overflow-hidden">
+                    <div className="text-center py-4 sm:py-6 border-b border-slate-200 bg-slate-50">
+                        <h2 className="text-base sm:text-2xl font-black text-slate-800 tracking-widest uppercase m-0">Maa Lakshmi Fuel Station</h2>
+                        <p className="text-slate-500 font-medium uppercase tracking-widest text-[10px] sm:text-xs mt-1">Monthly DSR — {monthLabel}</p>
                     </div>
 
                     {/* ======= PETROL SECTION ======= */}
-                    <div className="overflow-x-auto">
+                    <div className="overflow-x-auto hide-scrollbar">
                         <table className="w-full border-collapse text-xs" style={{ minWidth: '920px' }}>
                             <thead>
                                 <tr>
@@ -341,10 +345,10 @@ export default function DsrReport() {
                         </table>
                     </div>
 
-                    <div className="h-4 bg-slate-100 border-y border-slate-200" />
+                    <div className="h-3 sm:h-4 bg-slate-100 border-y border-slate-200" />
 
                     {/* ======= DIESEL SECTION ======= */}
-                    <div className="overflow-x-auto">
+                    <div className="overflow-x-auto hide-scrollbar">
                         <table className="w-full border-collapse text-xs" style={{ minWidth: '1100px' }}>
                             <thead>
                                 <tr>

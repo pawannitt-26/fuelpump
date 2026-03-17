@@ -32,7 +32,7 @@ export default function ClientWrapper({ children }: { children: React.ReactNode 
             <Sidebar />
             <main className={`main-content ${sidebarCollapsed ? 'expanded' : ''} transition-all duration-300`}>
                 <Header />
-                <div className="page-content bg-white min-h-[calc(100dvh-96px)] lg:rounded-tl-2xl shadow-sm lg:border-l border-t mt-0">
+                <div className="page-content bg-white min-h-[calc(100dvh-var(--header-height))] lg:rounded-tl-2xl shadow-sm lg:border-l border-t mt-0">
                     {children}
                 </div>
             </main>

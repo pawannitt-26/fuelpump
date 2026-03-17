@@ -8,8 +8,9 @@ export const translations = {
         dsrReport: "DSR Report",
         pendingApprovals: "Pending Approvals",
         updateRates: "Update Rates",
+        employees: "Employees",
+        virtualLocker: "Virtual Locker",
         logout: "Logout",
-
         // Roles & Titles
         admin: "Admin",
         manager: "Manager",
@@ -61,8 +62,9 @@ export const translations = {
         dsrReport: "डीएसआर रिपोर्ट",
         pendingApprovals: "लंबित स्वीकृतियां",
         updateRates: "दरें अपडेट करें",
+        employees: "कर्मचारी",
+        virtualLocker: "वर्चुअल लॉकर",
         logout: "लॉगआउट",
-
         // Roles & Titles
         admin: "एडमिन",
         manager: "मैनेजर",

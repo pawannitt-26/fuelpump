@@ -40,6 +40,8 @@ CREATE TABLE public.shifts (
     locked_flag BOOLEAN NOT NULL DEFAULT FALSE,
     approved_at TIMESTAMP WITH TIME ZONE,
     approved_by UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    ms_receipt NUMERIC(12, 2) DEFAULT 0,
+    hsd_receipt NUMERIC(12, 2) DEFAULT 0,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     UNIQUE(shift_date, shift_number)
 );
