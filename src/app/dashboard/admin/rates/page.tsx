@@ -19,11 +19,6 @@ export default function RatesManagement() {
     const [newRates, setNewRates] = useState<Record<string, string>>({});
 
     useEffect(() => {
-        // Basic protection
-        if (user?.role !== 'Admin') {
-            router.replace('/');
-            return;
-        }
 
         async function fetchProductsAndRates() {
             try {

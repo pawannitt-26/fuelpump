@@ -23,11 +23,26 @@ export default function Sidebar() {
             label: t('newShift', language),
             icon: <FileText size={20} />
         }] : []),
-        ...(isAdmin ? [{
+        {
+            href: '/dashboard/admin/employees',
+            label: t('employees', language as keyof typeof t),
+            icon: <Users size={20} />
+        },
+        {
+            href: '/dashboard/admin/locker',
+            label: t('virtualLocker', language as keyof typeof t),
+            icon: <Vault size={20} />
+        },
+        {
+            href: '/dashboard/admin/attendance',
+            label: t('attendance', language as keyof typeof t),
+            icon: <CalendarCheck size={20} />
+        },
+        {
             href: '/dashboard/admin/rates',
             label: t('updateRates', language),
             icon: <IndianRupee size={20} />
-        }] : []),
+        },
         {
             href: '/dsr',
             label: t('dsrReport', language),
@@ -42,7 +57,7 @@ export default function Sidebar() {
                 className={`fixed inset-0 bg-black/50 z-30 lg:hidden transition-opacity duration-300 ${sidebarOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
                 onClick={() => setSidebarOpen(false)}
             />
-            <aside className={`sidebar ${sidebarOpen ? 'open' : ''} ${sidebarCollapsed ? 'collapsed' : ''} bg-white border-r flex flex-col`}>
+            <aside className={`sidebar ${sidebarOpen ? 'open' : ''} ${sidebarCollapsed ? 'collapsed' : ''} bg-white border-r flex flex-col transition-all duration-300`}>
                 {/* Sidebar Header */}
                 <div className={`h-14 md:h-16 lg:h-[72px] px-3 lg:px-5 border-b flex items-center shrink-0 ${sidebarCollapsed ? 'justify-center' : 'justify-between'}`}>
                     {!sidebarCollapsed && (
@@ -90,7 +105,9 @@ export default function Sidebar() {
                                         <div className={sidebarCollapsed ? 'flex justify-center w-full' : ''}>
                                             {link.icon}
                                         </div>
-                                        {!sidebarCollapsed && <span className="truncate text-sm">{link.label}</span>}
+                                        {!sidebarCollapsed && (
+                                            <span className="truncate">{link.label}</span>
+                                        )}
                                     </Link>
                                 </li>
                             );
@@ -98,15 +115,15 @@ export default function Sidebar() {
                     </ul>
                 </div>
 
-                {/* Logout */}
-                <div className="p-3 border-t safe-area-bottom">
+                {/* Sidebar Footer */}
+                <div className="p-4 border-t border-slate-100">
                     <button
                         onClick={() => setUser(null)}
-                        className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'gap-3 px-4'} w-full py-3 text-slate-600 hover:text-red-600 hover:bg-red-50 active:bg-red-100 rounded-xl transition-colors min-h-[44px]`}
-                        title={sidebarCollapsed ? t('logout', language) : undefined}
+                        className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'gap-3 px-4 lg:px-6'} py-3 w-full text-rose-500 hover:bg-rose-50 rounded-xl transition-colors font-semibold`}
+                        title={sidebarCollapsed ? "Logout" : undefined}
                     >
                         <LogOut size={20} />
-                        {!sidebarCollapsed && <span className="truncate text-sm">{t('logout', language)}</span>}
+                        {!sidebarCollapsed && <span>{t('logout', language)}</span>}
                     </button>
                 </div>
             </aside>

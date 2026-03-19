@@ -288,22 +288,6 @@ export default function AdminDashboard() {
                 <div className="flex justify-center items-center py-32"><Loader2 className="animate-spin text-blue-500" size={48} /></div>
             ) : (
                 <div className="space-y-4 sm:space-y-8">
-                    {/* Quick Access Bar */}
-                    <div className="flex flex-wrap gap-2 sm:gap-4">
-                        <Link href="/dashboard/admin/employees" className="flex items-center gap-2 px-3 py-2 bg-white rounded-xl border border-slate-200 text-[10px] sm:text-xs font-black text-slate-600 hover:border-blue-500 hover:text-blue-600 transition-all shadow-sm">
-                            <Users size={14} className="text-blue-500" /> Staff Roster
-                        </Link>
-                        <Link href="/dashboard/admin/locker" className="flex items-center gap-2 px-3 py-2 bg-white rounded-xl border border-slate-200 text-[10px] sm:text-xs font-black text-slate-600 hover:border-emerald-500 hover:text-emerald-600 transition-all shadow-sm">
-                            <Vault size={14} className="text-emerald-500" /> Locker
-                        </Link>
-                        <Link href="/dashboard/admin/attendance" className="flex items-center gap-2 px-3 py-2 bg-white rounded-xl border border-slate-200 text-[10px] sm:text-xs font-black text-slate-600 hover:border-indigo-500 hover:text-indigo-600 transition-all shadow-sm">
-                            <CalendarCheck size={14} className="text-indigo-500" /> Attendance
-                        </Link>
-                        <Link href="/dashboard/admin/rates" className="flex items-center gap-2 px-3 py-2 bg-white rounded-xl border border-slate-200 text-[10px] sm:text-xs font-black text-slate-600 hover:border-orange-500 hover:text-orange-600 transition-all shadow-sm">
-                            <IndianRupee size={14} className="text-orange-500" /> Daily Rates
-                        </Link>
-                    </div>
-
                     {/* Navigation Tabs */}
                     <div className="flex overflow-x-auto hide-scrollbar bg-white p-1 sm:p-1.5 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm gap-0.5 sm:gap-1">
                         <button
