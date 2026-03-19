@@ -88,6 +88,9 @@ function ShiftEntryContent() {
         setTankDips(prev => prev.map(t => t.tankName === tankName ? { ...t, [field]: value } : t));
     };
 
+    // Unified Nozzleman State (stores employeeIds that are being unified)
+    const [unifiedEmps, setUnifiedEmps] = useState<string[]>([]);
+
     // Owner cash handover state
     const [cashToOwner, setCashToOwner] = useState<number>(0);
 
@@ -139,6 +142,20 @@ function ShiftEntryContent() {
                             setShift(existingShift.shift_number.toString() as '1' | '2');
                             setMsReceipt(parseFloat(existingShift.ms_receipt) || 0);
                             setHsdReceipt(parseFloat(existingShift.hsd_receipt) || 0);
+
+                            // Detect if unification is needed based on patterns (e.g. if one side has all cash/online and same emp is elsewhere)
+                            // But better to let user toggle. However, if multiple sides have same emp, we might want to pre-unify if they were unified before.
+                            // For now, we'll just load the sides.
+                            const sideEmpCounts: Record<string, number> = {};
+                            if (existingShift.shift_sides) {
+                                existingShift.shift_sides.forEach((s: any) => {
+                                    if (s.employee_id) sideEmpCounts[s.employee_id] = (sideEmpCounts[s.employee_id] || 0) + 1;
+                                });
+                            }
+                            const potentiallyUnified = Object.keys(sideEmpCounts).filter(id => sideEmpCounts[id] > 1);
+                            // We only unify if the split looks unified (e.g. only one side has non-zero payment)
+                            // But let's keep it simple: if same emp is on >1 side, we can offer unification.
+                            setUnifiedEmps(potentiallyUnified);
 
                             if (existingShift.shift_entries) {
                                 const loadedEntries = existingShift.shift_entries.map((e: any) => ({
@@ -249,16 +266,60 @@ function ShiftEntryContent() {
             return sum + qty;
         }, 0);
 
-        const total = sideEntries.reduce((sum, e) => {
+        const totalValue = sideEntries.reduce((sum, e) => {
             const qty = (e.closing || 0) - (e.opening || 0) - (e.testing || 0);
             return sum + (qty * e.rate);
         }, 0);
 
-        const collected = (sideData?.cash || 0) + (sideData?.online || 0);
-        const variance = collected - total;
+        const variance = (sideData?.cash || 0) + (sideData?.online || 0) - totalValue;
 
-        return { amount, total, collected, variance };
+        return { amount, total: totalValue, variance };
     };
+
+    // Helper for Unified Nozzleman Update
+    const updateUnifiedCollection = (empId: string, field: 'cash' | 'online', totalValue: number) => {
+        const linkedSides = sides.filter(s => s.employeeId === empId);
+        if (linkedSides.length === 0) return;
+
+        // Unified logic: we put everything on the FIRST linked side for internal reconciliation consistency, or distribute it.
+        // The prompt says "mostly split manually". I'll split it proportional to their VALUE to keep variances clean.
+        const linkedValues = linkedSides.map(ls => {
+            const ent = entries.filter(e => e.machine === ls.machine && e.side === ls.side);
+            return ent.reduce((sum, e) => sum + ((e.closing - e.opening - e.testing) * e.rate), 0);
+        });
+        const combinedValue = linkedValues.reduce((a, b) => a + b, 0);
+
+        setSides(prev => prev.map(s => {
+            if (s.employeeId !== empId) return s;
+
+            const sideIndex = linkedSides.findIndex(ls => ls.id === s.id);
+            const sideVal = linkedValues[sideIndex];
+
+            // Proportional split (to keep variance near zero on all sides if possible)
+            let splitAmount = combinedValue > 0 ? (sideVal / combinedValue) * totalValue : totalValue / linkedSides.length;
+
+            return { ...s, [field]: parseFloat(splitAmount.toFixed(2)) };
+        }));
+    };
+
+    // Calculate Global Unified Stats for the UI
+    const getUnifiedStats = (empId: string) => {
+        const linkedSides = sides.filter(s => s.employeeId === empId);
+        let totalCash = 0;
+        let totalOnline = 0;
+        let totalValue = 0;
+
+        linkedSides.forEach(ls => {
+            totalCash += ls.cash || 0;
+            totalOnline += ls.online || 0;
+            const ent = entries.filter(e => e.machine === ls.machine && e.side === ls.side);
+            totalValue += ent.reduce((sum, e) => sum + ((e.closing - e.opening - e.testing) * e.rate), 0);
+        });
+
+        return { totalCash, totalOnline, totalValue, variance: totalCash + totalOnline - totalValue };
+    };
+
+
 
     // Helper to calculate totals for a full machine
     const getMachineTotals = (machine: string) => {
@@ -537,6 +598,14 @@ function ShiftEntryContent() {
                             const sideState = sides.find(s => s.machine === machine && s.side === sideMarker);
                             const sideStats = getSideTotals(machine, sideMarker);
 
+                            // Unified check
+                            const empSides = sideState?.employeeId ? sides.filter(s => s.employeeId === sideState.employeeId) : [];
+                            const isUnifiedCandidate = empSides.length > 1;
+                            const isUnified = isUnifiedCandidate && unifiedEmps.includes(sideState?.employeeId || '');
+                            const isFirstOfUnified = isUnified && empSides[0].id === sideState?.id;
+                            const empName = employees.find(e => e.id === sideState?.employeeId)?.name || 'Unknown';
+                            const unifiedStats = isUnified ? getUnifiedStats(sideState!.employeeId!) : null;
+
                             return (
                                 <div key={`${machine}-${sideMarker}`} className="border-b-2 border-slate-100/60 last:border-b-0">
                                     <div className="bg-slate-50/50 p-3 sm:p-6 flex flex-col xl:flex-row justify-between xl:items-center gap-3 sm:gap-6">
@@ -547,7 +616,22 @@ function ShiftEntryContent() {
                                                 {sideMarker}
                                             </div>
                                             <div className="space-y-1 sm:space-y-2 flex-1 min-w-0">
-                                                <div className="text-[9px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest truncate">Side {sideMarker} <span className="text-slate-300 hidden sm:inline">({sideLabel})</span></div>
+                                                <div className="flex items-center justify-between mb-1 sm:mb-2">
+                                                    <div className="text-[9px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest truncate">Side {sideMarker} <span className="text-slate-300 hidden sm:inline">({sideLabel})</span></div>
+
+                                                    {isUnifiedCandidate && (
+                                                        <button
+                                                            onClick={() => {
+                                                                const eid = sideState!.employeeId!;
+                                                                setUnifiedEmps(prev => prev.includes(eid) ? prev.filter(p => p !== eid) : [...prev, eid]);
+                                                            }}
+                                                            className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[9px] font-black uppercase transition-all ${isUnified ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-500/20' : 'bg-white border-slate-200 text-slate-500 hover:border-blue-400'}`}
+                                                        >
+                                                            <Calculator size={10} />
+                                                            {isUnified ? 'Unified' : 'Unify Collection'}
+                                                        </button>
+                                                    )}
+                                                </div>
                                                 <select
                                                     value={sideState?.employeeId || ''}
                                                     onChange={(e) => updateSideProperty(machine, sideMarker, 'employeeId', e.target.value)}
@@ -563,7 +647,7 @@ function ShiftEntryContent() {
                                         </div>
 
                                         {/* Right: Real-time Stats Context */}
-                                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4 xl:w-3/4">
+                                        <div className={`grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4 xl:w-3/4 ${isUnified ? 'opacity-40 grayscale pointer-events-none' : ''}`}>
                                             <div className="bg-white p-2 sm:p-4 rounded-lg sm:rounded-2xl shadow-sm border border-slate-100">
                                                 <div className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5 flex items-center gap-1"><div className="w-1 h-1 bg-blue-400 rounded-full"></div> Disbursed</div>
                                                 <div className="text-sm sm:text-xl font-black text-slate-700">{sideStats.amount.toFixed(1)} L</div>
@@ -603,6 +687,59 @@ function ShiftEntryContent() {
                                         </div>
 
                                     </div>
+
+                                    {isUnified && isFirstOfUnified && (
+                                        <div className="mx-2 sm:mx-6 mb-4 p-3 sm:p-5 bg-gradient-to-br from-slate-800 to-slate-900 rounded-xl sm:rounded-2xl border border-slate-700 shadow-xl overflow-hidden relative">
+                                            <div className="relative z-10 flex flex-col gap-3">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></div>
+                                                        <span className="text-[10px] sm:text-xs font-black text-blue-300 uppercase tracking-widest">Unified Collection: {empName}</span>
+                                                    </div>
+                                                </div>
+
+                                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                                    <div className="bg-white/5 p-2 rounded-lg border border-white/5">
+                                                        <div className="text-[8px] sm:text-[9px] font-bold text-slate-500 uppercase">Total Value</div>
+                                                        <div className="text-sm sm:text-lg font-black text-white">₹{unifiedStats?.totalValue.toFixed(0)}</div>
+                                                    </div>
+
+                                                    <div className="bg-slate-700/50 p-2 rounded-lg border border-emerald-500/30">
+                                                        <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase">Total Cash</div>
+                                                        <div className="flex items-center border-b border-emerald-500/20 pb-0.5 mt-1">
+                                                            <span className="text-emerald-500 text-[10px] mr-1">₹</span>
+                                                            <input
+                                                                type="number"
+                                                                className="w-full bg-transparent border-none p-0 text-sm sm:text-lg font-black text-white focus:ring-0"
+                                                                placeholder="0"
+                                                                value={unifiedStats?.totalCash || ''}
+                                                                onChange={(e) => updateUnifiedCollection(sideState?.employeeId || '', 'cash', parseFloat(e.target.value) || 0)}
+                                                            />
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="bg-slate-700/50 p-2 rounded-lg border border-indigo-500/30">
+                                                        <div className="text-[8px] sm:text-[9px] font-bold text-indigo-400 uppercase">Total UPI</div>
+                                                        <div className="flex items-center border-b border-indigo-500/20 pb-0.5 mt-1">
+                                                            <span className="text-indigo-500 text-[10px] mr-1">₹</span>
+                                                            <input
+                                                                type="number"
+                                                                className="w-full bg-transparent border-none p-0 text-sm sm:text-lg font-black text-white focus:ring-0"
+                                                                placeholder="0"
+                                                                value={unifiedStats?.totalOnline || ''}
+                                                                onChange={(e) => updateUnifiedCollection(sideState?.employeeId || '', 'online', parseFloat(e.target.value) || 0)}
+                                                            />
+                                                        </div>
+                                                    </div>
+
+                                                    <div className={`p-2 rounded-lg border ${Math.abs(unifiedStats?.variance || 0) > 10 ? 'bg-red-500/10 border-red-500/30 text-red-400' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'}`}>
+                                                        <div className="text-[8px] sm:text-[9px] font-bold uppercase opacity-70">Margin</div>
+                                                        <div className="text-sm sm:text-lg font-black">₹{unifiedStats?.variance.toFixed(0)}</div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
 
                                     {/* Nozzle Meter Entries */}
                                     <div className="bg-white p-2 sm:p-6 border-t border-slate-100">
