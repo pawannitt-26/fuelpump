@@ -10,6 +10,7 @@ export const translations = {
         updateRates: "Update Rates",
         employees: "Employees",
         virtualLocker: "Virtual Locker",
+        attendance: "Attendance",
         logout: "Logout",
         // Roles & Titles
         admin: "Admin",
@@ -64,6 +65,7 @@ export const translations = {
         updateRates: "दरें अपडेट करें",
         employees: "कर्मचारी",
         virtualLocker: "वर्चुअल लॉकर",
+        attendance: "उपस्थिति",
         logout: "लॉगआउट",
         // Roles & Titles
         admin: "एडमिन",

@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAppStore } from '@/store/appStore';
 import { t } from '@/lib/i18n';
-import { LayoutDashboard, FileText, CheckCircle, FileSpreadsheet, LogOut, X, IndianRupee, ChevronLeft, ChevronRight, Users, Vault } from 'lucide-react';
+import { LayoutDashboard, FileText, CheckCircle, FileSpreadsheet, LogOut, X, IndianRupee, ChevronLeft, ChevronRight, Users, Vault, CalendarCheck } from 'lucide-react';
 
 export default function Sidebar() {
     const pathname = usePathname();
@@ -22,15 +22,6 @@ export default function Sidebar() {
             href: '/shift/entry',
             label: t('newShift', language),
             icon: <FileText size={20} />
-        }] : []),
-        ...(isAdmin || user?.role === 'Manager' ? [{
-            href: '/dashboard/admin/employees',
-            label: t('employees', language as keyof typeof t),
-            icon: <Users size={20} />
-        }, {
-            href: '/dashboard/admin/locker',
-            label: t('virtualLocker', language as keyof typeof t),
-            icon: <Vault size={20} />
         }] : []),
         ...(isAdmin ? [{
             href: '/dashboard/admin/rates',

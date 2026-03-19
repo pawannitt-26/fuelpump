@@ -3,7 +3,7 @@
 import { useAppStore } from '@/store/appStore';
 import { t } from '@/lib/i18n';
 import Link from 'next/link';
-import { FileText, Clock, CheckCircle, Users, Vault } from 'lucide-react';
+import { FileText, Clock, CheckCircle, Users, Vault, CalendarCheck } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 
@@ -81,6 +81,12 @@ export default function ManagerDashboard() {
                     <Vault className="text-emerald-500 mb-3 group-hover:scale-110 transition-transform" size={28} />
                     <h3 className="text-slate-500 font-medium text-xs sm:text-sm m-0">Virtual Locker</h3>
                     <p className="text-[10px] text-slate-400 mt-1 hidden sm:block">Track station cash float.</p>
+                </Link>
+
+                <Link href="/dashboard/admin/attendance" className="card border-t-4 border-t-blue-500 flex flex-col items-center justify-center p-4 sm:p-6 text-center hover:bg-slate-50 transition-all group">
+                    <CalendarCheck className="text-blue-500 mb-3 group-hover:scale-110 transition-transform" size={28} />
+                    <h3 className="text-slate-500 font-medium text-xs sm:text-sm m-0">Attendance Log</h3>
+                    <p className="text-[10px] text-slate-400 mt-1 hidden sm:block">Digital register from shifts.</p>
                 </Link>
             </div>
 
