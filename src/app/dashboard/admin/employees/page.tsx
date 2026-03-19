@@ -128,10 +128,11 @@ export default function EmployeesPage() {
         if (!selectedEmp || !txAmount || isNaN(Number(txAmount))) return;
         setIsSubmitting(true);
 
-        // Advance: paying employee (station loses cash, employee ledger drops/goes negative)
-        // Settlement: employee paying station back (station gains cash, employee ledger rises toward 0)
-        let amount = Math.abs(Number(txAmount));
-        if (txType === 'advance') amount = -amount; // Neg means we gave them money
+        const absAmount = Math.abs(Number(txAmount));
+        // Advance: money given TO employee → positive in employee ledger, negative in locker
+        // Settlement: money returned BY employee → negative in employee ledger, positive in locker
+        const empLedgerAmount = txType === 'advance' ? absAmount : -absAmount;
+        const lockerAmount = txType === 'advance' ? -absAmount : absAmount;
 
         const desc = txDesc.trim() || (txType === 'advance' ? 'Cash Advance' : 'Settlement Paid');
 
@@ -140,24 +141,24 @@ export default function EmployeesPage() {
             .insert([{
                 employee_id: selectedEmp.id,
                 type: txType,
-                amount: amount,
+                amount: empLedgerAmount,
                 description: desc,
                 created_at: new Date(txDate).toISOString()
             }]);
 
         if (!txError) {
-            // Also update the Virtual Locker for Advance/Settlement
+            // Mirror transaction in Virtual Locker
             await supabase.from('locker_transactions').insert([{
-                type: txType === 'advance' ? 'employee_advance' : 'shift_deposit',
-                amount: txType === 'advance' ? amount : Math.abs(amount),
+                type: txType === 'advance' ? 'employee_advance' : 'owner_deposit',
+                amount: lockerAmount,
                 description: `${txType === 'advance' ? 'Advance to' : 'Settlement from'} ${selectedEmp.name}`,
                 created_at: new Date(txDate).toISOString()
             }]);
 
             setTxAmount('');
             setTxDesc('');
-            openLedger(selectedEmp); // refresh modal
-            fetchEmployees(); // refresh background balances
+            openLedger(selectedEmp);
+            fetchEmployees();
         }
         setIsSubmitting(false);
     };

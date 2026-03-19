@@ -31,6 +31,7 @@ interface SideEntry {
     cash: number;
     online: number;
     ghatti: number;
+    description?: string | null;
 }
 
 interface TankDip {
@@ -72,7 +73,7 @@ function ShiftEntryContent() {
     ]);
 
     // Dedicated state for Lube Sales
-    const [lubeState, setLubeState] = useState({ total: 0, cash: 0, online: 0 });
+    const [lubeState, setLubeState] = useState({ total: 0, cash: 0, online: 0, description: '' });
 
     // Fuel Receipt State
     const [msReceipt, setMsReceipt] = useState<number>(0);
@@ -189,9 +190,10 @@ function ShiftEntryContent() {
                                 const lubeSide = existingShift.shift_sides.find((s: any) => s.machine === 'Lube');
                                 if (lubeSide) {
                                     setLubeState({
-                                        total: parseFloat(lubeSide.lube_sales) || 0,
-                                        cash: parseFloat(lubeSide.cash_received) || 0,
-                                        online: parseFloat(lubeSide.online_received) || 0
+                                        total: Number(lubeSide.lube_sales) || 0,
+                                        cash: Number(lubeSide.cash_received) || 0,
+                                        online: Number(lubeSide.online_received) || 0,
+                                        description: lubeSide.description || ''
                                     });
                                 }
                             }
@@ -224,15 +226,16 @@ function ShiftEntryContent() {
                     }
 
                     // Default Initial State for New Shift, auto-filling opening from previous closing
+                    const defaultTest = shift === '1' ? 5 : 0;
                     setEntries([
-                        { id: 'F1', machine: 'Front', side: 'A', product: 'HSD', product_id: rateMap['HSD'].id, nozzleNo: '1', opening: prevClosingMap['Front-1'] || 0, closing: 0, testing: 0, rate: rateMap['HSD'].rate },
-                        { id: 'F3', machine: 'Front', side: 'A', product: 'MS', product_id: rateMap['MS'].id, nozzleNo: '3', opening: prevClosingMap['Front-3'] || 0, closing: 0, testing: 0, rate: rateMap['MS'].rate },
-                        { id: 'F2', machine: 'Front', side: 'B', product: 'HSD', product_id: rateMap['HSD'].id, nozzleNo: '2', opening: prevClosingMap['Front-2'] || 0, closing: 0, testing: 0, rate: rateMap['HSD'].rate },
-                        { id: 'F4', machine: 'Front', side: 'B', product: 'MS', product_id: rateMap['MS'].id, nozzleNo: '4', opening: prevClosingMap['Front-4'] || 0, closing: 0, testing: 0, rate: rateMap['MS'].rate },
-                        { id: 'B1', machine: 'Back', side: 'A', product: 'HSD', product_id: rateMap['HSD'].id, nozzleNo: '1', opening: prevClosingMap['Back-1'] || 0, closing: 0, testing: 0, rate: rateMap['HSD'].rate },
-                        { id: 'B3', machine: 'Back', side: 'A', product: 'MS', product_id: rateMap['MS'].id, nozzleNo: '3', opening: prevClosingMap['Back-3'] || 0, closing: 0, testing: 0, rate: rateMap['MS'].rate },
-                        { id: 'B2', machine: 'Back', side: 'B', product: 'HSD', product_id: rateMap['HSD'].id, nozzleNo: '2', opening: prevClosingMap['Back-2'] || 0, closing: 0, testing: 0, rate: rateMap['HSD'].rate },
-                        { id: 'B4', machine: 'Back', side: 'B', product: 'MS', product_id: rateMap['MS'].id, nozzleNo: '4', opening: prevClosingMap['Back-4'] || 0, closing: 0, testing: 0, rate: rateMap['MS'].rate },
+                        { id: 'F1', machine: 'Front', side: 'A', product: 'HSD', product_id: rateMap['HSD'].id, nozzleNo: '1', opening: prevClosingMap['Front-1'] || 0, closing: 0, testing: defaultTest, rate: rateMap['HSD'].rate },
+                        { id: 'F3', machine: 'Front', side: 'A', product: 'MS', product_id: rateMap['MS'].id, nozzleNo: '3', opening: prevClosingMap['Front-3'] || 0, closing: 0, testing: defaultTest, rate: rateMap['MS'].rate },
+                        { id: 'F2', machine: 'Front', side: 'B', product: 'HSD', product_id: rateMap['HSD'].id, nozzleNo: '2', opening: prevClosingMap['Front-2'] || 0, closing: 0, testing: defaultTest, rate: rateMap['HSD'].rate },
+                        { id: 'F4', machine: 'Front', side: 'B', product: 'MS', product_id: rateMap['MS'].id, nozzleNo: '4', opening: prevClosingMap['Front-4'] || 0, closing: 0, testing: defaultTest, rate: rateMap['MS'].rate },
+                        { id: 'B1', machine: 'Back', side: 'A', product: 'HSD', product_id: rateMap['HSD'].id, nozzleNo: '1', opening: prevClosingMap['Back-1'] || 0, closing: 0, testing: defaultTest, rate: rateMap['HSD'].rate },
+                        { id: 'B3', machine: 'Back', side: 'A', product: 'MS', product_id: rateMap['MS'].id, nozzleNo: '3', opening: prevClosingMap['Back-3'] || 0, closing: 0, testing: defaultTest, rate: rateMap['MS'].rate },
+                        { id: 'B2', machine: 'Back', side: 'B', product: 'HSD', product_id: rateMap['HSD'].id, nozzleNo: '2', opening: prevClosingMap['Back-2'] || 0, closing: 0, testing: defaultTest, rate: rateMap['HSD'].rate },
+                        { id: 'B4', machine: 'Back', side: 'B', product: 'MS', product_id: rateMap['MS'].id, nozzleNo: '4', opening: prevClosingMap['Back-4'] || 0, closing: 0, testing: defaultTest, rate: rateMap['MS'].rate },
                     ]);
 
                 }
@@ -260,16 +263,18 @@ function ShiftEntryContent() {
                 updated.nozzleMan = emp ? emp.name : '';
             }
 
-            // Auto-calculate Ghatti
-            const sideEntries = entries.filter(e => e.machine === s.machine && e.side === s.side);
-            const expectedValue = sideEntries.reduce((sum, e) => {
-                const qty = (e.closing || 0) - (e.opening || 0) - (e.testing || 0);
-                return sum + (qty * (e.rate || 0));
-            }, 0);
-            const currentCash = field === 'cash' ? Number(value) : s.cash;
-            const currentOnline = field === 'online' ? Number(value) : s.online;
-            const variance = (currentCash + currentOnline) - expectedValue;
-            updated.ghatti = variance < 0 ? Math.abs(variance) : 0;
+            // Auto-calculate Ghatti (skip if user is manually editing ghatti)
+            if (field !== 'ghatti') {
+                const sideEntries = entries.filter(e => e.machine === s.machine && e.side === s.side);
+                const expectedValue = sideEntries.reduce((sum, e) => {
+                    const qty = (e.closing || 0) - (e.opening || 0) - (e.testing || 0);
+                    return sum + (qty * (e.rate || 0));
+                }, 0);
+                const currentCash = field === 'cash' ? Number(value) : s.cash;
+                const currentOnline = field === 'online' ? Number(value) : s.online;
+                const variance = (currentCash + currentOnline) - expectedValue;
+                updated.ghatti = variance < 0 ? Math.abs(variance) : 0;
+            }
 
             return updated;
         }));
@@ -286,16 +291,18 @@ function ShiftEntryContent() {
                 updated.nozzleMan = emp ? emp.name : '';
             }
 
-            // Auto-calculate Ghatti
-            const sideEntries = entries.filter(e => e.machine === machine && e.side === side);
-            const expectedValue = sideEntries.reduce((sum, e) => {
-                const qty = (e.closing || 0) - (e.opening || 0) - (e.testing || 0);
-                return sum + (qty * (e.rate || 0));
-            }, 0);
-            const currentCash = field === 'cash' ? Number(value) : s.cash;
-            const currentOnline = field === 'online' ? Number(value) : s.online;
-            const variance = (currentCash + currentOnline) - expectedValue;
-            updated.ghatti = variance < 0 ? Math.abs(variance) : 0;
+            // Auto-calculate Ghatti (skip if user is manually editing ghatti)
+            if (field !== 'ghatti') {
+                const sideEntries = entries.filter(e => e.machine === machine && e.side === side);
+                const expectedValue = sideEntries.reduce((sum, e) => {
+                    const qty = (e.closing || 0) - (e.opening || 0) - (e.testing || 0);
+                    return sum + (qty * (e.rate || 0));
+                }, 0);
+                const currentCash = field === 'cash' ? Number(value) : s.cash;
+                const currentOnline = field === 'online' ? Number(value) : s.online;
+                const variance = (currentCash + currentOnline) - expectedValue;
+                updated.ghatti = variance < 0 ? Math.abs(variance) : 0;
+            }
 
             return updated;
         }));
@@ -486,10 +493,10 @@ function ShiftEntryContent() {
                 cash_received: s.cash || 0,
                 online_received: s.online || 0,
                 lube_sales: 0,
-                ghatti: s.ghatti || 0
+                ghatti: s.ghatti || 0,
+                description: null as string | null
             }));
 
-            // Push dedicated Lube sales record
             sidesInserts.push({
                 shift_id: shiftId,
                 machine: 'Lube' as any,
@@ -499,7 +506,8 @@ function ShiftEntryContent() {
                 cash_received: lubeState.cash || 0,
                 online_received: lubeState.online || 0,
                 lube_sales: lubeState.total || 0,
-                ghatti: 0
+                ghatti: 0,
+                description: lubeState.description || null
             });
 
             const { error: sidesError } = await supabase.from('shift_sides').insert(sidesInserts);
@@ -576,7 +584,7 @@ function ShiftEntryContent() {
 
     return (
         <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6 lg:space-y-8 pb-28 sm:pb-24">
-            {/* Header Area */}
+            {/* Header Are a */}
             <div className="flex flex-col sm:flex-row items-start sm:justify-between gap-2.5 sm:gap-3 bg-white p-3 sm:p-6 rounded-xl sm:rounded-2xl shadow-sm border border-slate-100">
                 <div className="flex items-center gap-2.5 sm:gap-5 w-full sm:w-auto">
                     <Link href="/dashboard/manager" className="text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 p-2 sm:p-3 rounded-lg sm:rounded-xl transition-all h-fit shrink-0">
@@ -598,7 +606,7 @@ function ShiftEntryContent() {
                 </div>
             </div>
 
-            {/* Shift Details Context */}
+            {/* Shift Details Contex t */}
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-6">
                 <div className="bg-white p-2.5 sm:p-5 rounded-xl sm:rounded-2xl border-b-4 border-l border-r border-t border-slate-100 border-b-blue-500 shadow-sm relative overflow-hidden group">
                     <label className="text-[9px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 sm:mb-2 block">{t('date', language)}</label>
@@ -629,7 +637,8 @@ function ShiftEntryContent() {
                 </div>
             </div>
 
-            {/* Machine Layouts */}
+            {/* Machine Layout s */}
+
             {['Front', 'Back'].map((machine) => {
                 const machineStats = getMachineTotals(machine);
                 const isFront = machine === 'Front';
@@ -818,7 +827,7 @@ function ShiftEntryContent() {
                                                         </div>
                                                         <div className="text-right">
                                                             <div className="text-[9px] text-slate-400 leading-none">Sale</div>
-                                                            <div className="text-[11px] sm:text-sm font-black text-slate-700">{(entry.closing - entry.opening - entry.testing).toFixed(1)}L</div>
+                                                            <div className="text-[11px] sm:text-sm font-black text-slate-700">{(entry.closing - entry.opening - entry.testing).toFixed(2)}L</div>
                                                         </div>
                                                     </div>
                                                     <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
@@ -891,9 +900,10 @@ function ShiftEntryContent() {
                         })}
                     </div>
                 );
+
             })}
 
-            {/* Lube Sales Card */}
+            {/* Lube Sales Car d */}
             <div className="bg-white rounded-2xl sm:rounded-3xl overflow-hidden shadow-xl shadow-slate-200/40 border border-amber-100">
                 {/* Lube Header */}
                 <div className="p-3 sm:p-6 bg-gradient-to-r from-amber-900 to-amber-800 text-white flex flex-row justify-between items-center gap-2 sm:gap-3">
@@ -944,6 +954,21 @@ function ShiftEntryContent() {
                         </div>
                     </div>
 
+                    {/* Lube Description */}
+                    <div className="mt-4 sm:mt-6 bg-amber-50/30 p-3 sm:p-5 rounded-xl sm:rounded-2xl border border-amber-100/50">
+                        <label className="text-[10px] sm:text-xs font-black text-amber-700 uppercase tracking-widest mb-2 flex items-center gap-1.5 ml-1">
+                            <div className="w-1.5 h-1.5 rounded-full bg-amber-500"></div>
+                            Lube Details / Remarks
+                        </label>
+                        <textarea
+                            rows={2}
+                            placeholder="Specify products (e.g., 2x 1L 4T Oil, 1L Coolant...)"
+                            className="w-full bg-white border border-amber-200 rounded-lg sm:rounded-[1.25rem] px-3 sm:px-5 py-2.5 sm:py-4 text-xs sm:text-base text-slate-700 font-medium focus:ring-4 focus:ring-amber-500/10 focus:border-amber-400 focus:outline-none placeholder:text-slate-300 transition-all resize-none shadow-sm"
+                            value={lubeState.description}
+                            onChange={(e) => setLubeState({ ...lubeState, description: e.target.value })}
+                        />
+                    </div>
+
                     <div className="mt-4 sm:mt-6 bg-slate-50/50 p-3 sm:p-5 rounded-xl sm:rounded-2xl border border-slate-200">
                         <div className="flex flex-row justify-between items-center gap-3">
                             <div>
@@ -962,7 +987,7 @@ function ShiftEntryContent() {
                 </div>
             </div>
 
-            {/* Tank Dip Readings Card */}
+            {/* Tank Dip Readings Car d */}
             <div className="card w-full relative border border-teal-100 shadow-lg bg-gradient-to-br from-teal-50/50 to-white overflow-hidden rounded-xl sm:rounded-[2rem] p-2.5 sm:p-6">
                 <div className="flex items-center gap-2 sm:gap-4 border-b border-teal-100 pb-2 sm:pb-5 mb-3 sm:mb-6">
                     <div className="w-8 h-8 sm:w-12 sm:h-12 bg-teal-100 rounded-lg sm:rounded-2xl flex items-center justify-center shadow-inner shrink-0">
@@ -1013,7 +1038,7 @@ function ShiftEntryContent() {
                                             />
                                         </td>
                                         <td className={`py-1.5 px-2 sm:px-5 text-right text-xs sm:text-sm font-bold ${Math.abs(diff) > 1 ? (diff < 0 ? 'text-red-500' : 'text-emerald-600') : 'text-slate-400'}`}>
-                                            {diff !== 0 ? `${diff > 0 ? '+' : ''}${diff.toFixed(1)}` : '-'}
+                                            {diff !== 0 ? `${diff > 0 ? '+' : ''}${diff.toFixed(2)}` : '-'}
                                         </td>
                                     </tr>
                                 );
@@ -1023,7 +1048,7 @@ function ShiftEntryContent() {
                 </div>
             </div>
 
-            {/* Fuel Receipt Section */}
+            {/* Fuel Receipt Sectio n */}
             <div className="card w-full relative border border-blue-100 shadow-lg bg-gradient-to-br from-blue-50/50 to-white overflow-hidden rounded-xl sm:rounded-[2rem] p-4 sm:p-6">
                 <div className="flex items-center gap-2 sm:gap-4 border-b border-blue-100 pb-3 sm:pb-5 mb-4 sm:mb-6">
                     <div className="w-8 h-8 sm:w-12 sm:h-12 bg-blue-100 rounded-lg sm:rounded-2xl flex items-center justify-center shadow-inner shrink-0">
@@ -1071,7 +1096,7 @@ function ShiftEntryContent() {
                 </div>
             </div>
 
-            {/* Grand Global Summary */}
+            {/* Grand Global Summar y */}
             <div className="card relative overflow-hidden bg-gradient-to-r from-blue-950 via-slate-900 to-slate-950 text-white shadow-2xl shadow-blue-900/40 border-none px-4 py-6 sm:px-6 sm:py-8 md:p-10 rounded-2xl sm:rounded-3xl">
                 <div className="absolute top-0 right-0 w-40 sm:w-64 h-40 sm:h-64 bg-blue-500 rounded-full blur-[80px] sm:blur-[100px] opacity-20 pointer-events-none"></div>
 
@@ -1085,11 +1110,11 @@ function ShiftEntryContent() {
                         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-4">
                             <div>
                                 <div className="text-[8px] sm:text-[10px] text-emerald-400 uppercase tracking-widest font-bold mb-0.5">MS Fuel</div>
-                                <div className="text-base sm:text-xl font-black text-white">{grandTotals.ms.toFixed(1)}L</div>
+                                <div className="text-base sm:text-xl font-black text-white">{grandTotals.ms.toFixed(2)}L</div>
                             </div>
                             <div>
                                 <div className="text-[8px] sm:text-[10px] text-amber-400 uppercase tracking-widest font-bold mb-0.5">HSD Fuel</div>
-                                <div className="text-base sm:text-xl font-black text-white">{grandTotals.hsd.toFixed(1)}L</div>
+                                <div className="text-base sm:text-xl font-black text-white">{grandTotals.hsd.toFixed(2)}L</div>
                             </div>
                             <div className="col-span-1">
                                 <div className="text-[8px] sm:text-[10px] text-blue-300/80 uppercase tracking-widest font-bold mb-0.5">Exp Sale</div>
@@ -1112,24 +1137,6 @@ function ShiftEntryContent() {
                             <div>
                                 <div className="text-[8px] sm:text-[10px] text-indigo-300/80 uppercase tracking-widest font-bold mb-0.5">UPI Rx</div>
                                 <div className="text-base sm:text-xl font-black text-indigo-400">₹{totalOnlineGlobal.toFixed(0)}</div>
-                            </div>
-
-                            {/* Owner Handover & Locker */}
-                            <div className="bg-slate-900/50 p-2 sm:p-4 rounded-lg sm:rounded-xl border border-slate-800">
-                                <div className="text-[8px] sm:text-[10px] text-rose-300/80 font-bold uppercase tracking-widest mb-0.5 flex items-center gap-1"><Banknote size={8} /> Handover</div>
-                                <div className="flex items-center text-rose-400 font-black text-sm sm:text-xl">
-                                    <span className="mr-0.5 text-[10px] sm:text-sm">₹</span>
-                                    <input type="number" inputMode="decimal" min="0" placeholder="0"
-                                        className="w-12 sm:w-20 bg-transparent border-0 border-b border-rose-500/30 p-0 text-rose-400 focus:ring-0 focus:border-rose-400 text-sm sm:text-xl font-black placeholder:text-rose-900/50 transition-colors"
-                                        value={cashToOwner === 0 ? '' : cashToOwner}
-                                        onChange={(e) => setCashToOwner(parseFloat(e.target.value) || 0)}
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="bg-slate-900/50 p-2 sm:p-4 rounded-lg sm:rounded-xl border border-slate-800">
-                                <div className="text-[8px] sm:text-[10px] text-teal-300/80 font-bold uppercase tracking-widest mb-0.5 flex items-center gap-1"><Vault size={8} /> Locker</div>
-                                <div className="text-base sm:text-xl font-black text-teal-400">₹{(totalCashGlobal - cashToOwner).toFixed(0)}</div>
                             </div>
 
                             {/* Net Discrepancy */}
@@ -1156,7 +1163,7 @@ function ShiftEntryContent() {
                 </div>
             </div>
 
-            {/* Mobile Fixed Bottom Submit Button */}
+            {/* Mobile Fixed Bottom Submit Butto n */}
             <div className="sm:hidden fixed bottom-0 left-0 right-0 z-50 p-3 bg-white/95 backdrop-blur-md border-t border-slate-200 safe-area-bottom">
                 <button
                     onClick={handleSubmit}

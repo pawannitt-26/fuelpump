@@ -222,7 +222,7 @@ export default function VirtualLockerPage() {
                                         <div className="flex justify-between items-start">
                                             <div className="min-w-0 flex-1 pr-2">
                                                 <div className="text-xs text-slate-400 font-medium mb-0.5">
-                                                    {new Date(tx.created_at).toLocaleDateString('en-GB')} • {new Date(tx.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
+                                                    {new Date(tx.created_at).toLocaleDateString('en-GB')}
                                                 </div>
                                                 <div className="font-bold text-slate-800 text-sm leading-tight mb-1">{tx.description}</div>
                                                 <div className="flex items-center gap-2">
@@ -249,7 +249,7 @@ export default function VirtualLockerPage() {
                         <table className="w-full text-left border-collapse">
                             <thead>
                                 <tr className="bg-slate-50 text-slate-500 text-[10px] uppercase tracking-widest border-b border-slate-100">
-                                    <th className="p-4 font-bold">Date & Time</th>
+                                    <th className="p-4 font-bold">Date</th>
                                     <th className="p-4 font-bold">Details</th>
                                     <th className="p-4 font-bold text-right">Amount</th>
                                     <th className="p-4 font-bold text-right">Balance</th>
@@ -277,7 +277,6 @@ export default function VirtualLockerPage() {
                                             <tr key={tx.id} className="hover:bg-slate-50/50 group transition-colors">
                                                 <td className="p-4">
                                                     <div className="text-sm font-bold text-slate-700">{new Date(tx.created_at).toLocaleDateString('en-GB')}</div>
-                                                    <div className="text-xs text-slate-400 font-mono">{new Date(tx.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                                                 </td>
                                                 <td className="p-4">
                                                     <div className="font-semibold text-slate-800 text-sm mb-1">{tx.description}</div>

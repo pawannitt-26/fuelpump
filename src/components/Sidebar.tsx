@@ -38,11 +38,11 @@ export default function Sidebar() {
             label: t('attendance', language as keyof typeof t),
             icon: <CalendarCheck size={20} />
         },
-        {
+        ...(isAdmin ? [{
             href: '/dashboard/admin/rates',
             label: t('updateRates', language),
             icon: <IndianRupee size={20} />
-        },
+        }] : []),
         {
             href: '/dsr',
             label: t('dsrReport', language),

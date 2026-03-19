@@ -62,19 +62,18 @@ export default function AdminDashboard() {
                 setTotalMismatch(mismatch);
                 setPending(formattedPending);
 
-                // Fetch ALL Approved Shifts with entries and sides for deep analytics
-                const { data: approvedData, error: approvedErr } = await supabase
+                // Fetch ALL Shifts with entries and sides for deep analytics
+                const { data: allShiftData, error: allShiftErr } = await supabase
                     .from('shifts')
                     .select(`
                         id, shift_date, shift_number,
                         shift_sides ( cash_received, online_received, lube_sales ),
                         shift_entries ( products(name), sale_qty, amount )
                     `)
-                    .eq('status', 'Approved')
                     .order('shift_date', { ascending: false });
 
-                if (approvedErr) throw approvedErr;
-                setAllShifts(approvedData || []);
+                if (allShiftErr) throw allShiftErr;
+                setAllShifts(allShiftData || []);
 
             } catch (err) {
                 console.error('Error fetching admin data:', err);
@@ -349,7 +348,7 @@ export default function AdminDashboard() {
                                     <div className="py-8 sm:py-12 text-center bg-white rounded-xl sm:rounded-2xl border border-slate-200">
                                         <div className="inline-flex w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-slate-50 items-center justify-center text-slate-300 mb-3 sm:mb-4"><Database size={20} /></div>
                                         <h3 className="text-sm sm:text-lg font-bold text-slate-700">No Data</h3>
-                                        <p className="text-xs sm:text-sm text-slate-500">No approved shifts for this period.</p>
+                                        <p className="text-xs sm:text-sm text-slate-500">No shifts for this period.</p>
                                     </div>
                                 ) : (
                                     <>
