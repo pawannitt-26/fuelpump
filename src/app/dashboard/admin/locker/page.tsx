@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAppStore } from '@/store/appStore';
 import { supabase } from '@/lib/supabase';
-import { Vault, Plus, ArrowUpRight, ArrowDownRight, History, Download, X, IndianRupee, Landmark, Check } from 'lucide-react';
+import { Vault, ArrowUpRight, ArrowDownRight, History, Check, Landmark } from 'lucide-react';
 
 interface LockerTransaction {
     id: string;
@@ -11,6 +11,7 @@ interface LockerTransaction {
     amount: number;
     description: string;
     created_at: string;
+    runningBalance?: number;
 }
 
 export default function VirtualLockerPage() {
@@ -24,6 +25,7 @@ export default function VirtualLockerPage() {
     const [txType, setTxType] = useState<'owner_deposit' | 'owner_withdrawal' | 'expense'>('owner_withdrawal');
     const [txAmount, setTxAmount] = useState('');
     const [txDesc, setTxDesc] = useState('');
+    const [txDate, setTxDate] = useState(new Date().toISOString().substring(0, 10));
 
     useEffect(() => {
         fetchLockerData();
@@ -34,12 +36,17 @@ export default function VirtualLockerPage() {
         const { data, error } = await supabase
             .from('locker_transactions')
             .select('*')
-            .order('created_at', { ascending: false });
+            .order('created_at', { ascending: true }); // Process chronologically for running balance
 
         if (!error && data) {
-            setTransactions(data);
-            const total = data.reduce((sum, tx) => sum + Number(tx.amount), 0);
-            setBalance(total);
+            let currentTotal = 0;
+            const processed = data.map(tx => {
+                currentTotal += Number(tx.amount);
+                return { ...tx, runningBalance: currentTotal };
+            });
+            // Show latest first
+            setTransactions([...processed].reverse());
+            setBalance(currentTotal);
         } else if (error) {
             console.error('Error fetching locker transactions:', error);
         }
@@ -61,7 +68,8 @@ export default function VirtualLockerPage() {
             .insert([{
                 type: txType,
                 amount: finalAmount,
-                description: txDesc.trim() || (txType === 'expense' ? 'Station Expense' : isAddition ? 'Owner Deposit' : 'Owner Withdrawal')
+                description: txDesc.trim() || (txType === 'expense' ? 'Station Expense' : isAddition ? 'Owner Deposit' : 'Owner Withdrawal'),
+                created_at: new Date(txDate).toISOString()
             }]);
 
         if (!error) {
@@ -74,7 +82,7 @@ export default function VirtualLockerPage() {
         setIsSubmitting(false);
     };
 
-    if (user?.role !== 'Admin') {
+    if (user?.role !== 'Admin' && user?.role !== 'Manager') {
         return <div className="p-8 text-center text-red-500 font-bold">Access Denied</div>;
     }
 
@@ -105,9 +113,14 @@ export default function VirtualLockerPage() {
                 {/* Left Col: Add Transaction */}
                 <div className="lg:col-span-1 space-y-4 sm:space-y-6">
                     <div className="card bg-white p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm sm:sticky sm:top-6">
-                        <h2 className="text-base sm:text-lg font-bold text-slate-800 mb-4 sm:mb-6 flex items-center gap-2 border-b pb-3 sm:pb-4">
-                            <Landmark size={18} className="text-emerald-500" />
-                            Record Cash Movement
+                        <h2 className="text-base sm:text-lg font-bold text-slate-800 mb-4 sm:mb-6 flex items-center justify-between border-b pb-3 sm:pb-4">
+                            <div className="flex items-center gap-2">
+                                <Landmark size={18} className="text-emerald-500" />
+                                Record Cash
+                            </div>
+                            <div className="px-2 py-0.5 bg-slate-100 rounded text-[10px] font-mono font-bold text-slate-500">
+                                Bal: ₹{balance.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                            </div>
                         </h2>
                         <form onSubmit={handleAddTransaction} className="space-y-4 sm:space-y-5">
                             <div>
@@ -126,6 +139,18 @@ export default function VirtualLockerPage() {
                             </div>
 
                             <div className="grid grid-cols-1 sm:grid-cols-1 gap-4">
+                                <div>
+                                    <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 sm:mb-2">Transaction Date</label>
+                                    <input
+                                        type="date"
+                                        required
+                                        className="input-field w-full rounded-lg sm:rounded-xl p-2.5 sm:p-3 text-sm sm:text-base font-bold bg-slate-50 border-slate-200 capitalize"
+                                        value={txDate}
+                                        onChange={(e) => setTxDate(e.target.value)}
+                                        disabled={isSubmitting}
+                                    />
+                                </div>
+
                                 <div>
                                     <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 sm:mb-2">Amount (₹)</label>
                                     <input
@@ -200,9 +225,14 @@ export default function VirtualLockerPage() {
                                                     {new Date(tx.created_at).toLocaleDateString('en-GB')} • {new Date(tx.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
                                                 </div>
                                                 <div className="font-bold text-slate-800 text-sm leading-tight mb-1">{tx.description}</div>
-                                                <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${typeClass}`}>
-                                                    {displayLabel}
-                                                </span>
+                                                <div className="flex items-center gap-2">
+                                                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${typeClass}`}>
+                                                        {displayLabel}
+                                                    </span>
+                                                    <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">
+                                                        Bal: ₹{tx.runningBalance?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                                                    </span>
+                                                </div>
                                             </div>
                                             <div className={`text-right font-mono font-black text-sm shrink-0 ${isPos ? 'text-emerald-600' : 'text-rose-600'}`}>
                                                 {isPos ? '+' : '-'}₹{absAmount}
@@ -221,8 +251,8 @@ export default function VirtualLockerPage() {
                                 <tr className="bg-slate-50 text-slate-500 text-[10px] uppercase tracking-widest border-b border-slate-100">
                                     <th className="p-4 font-bold">Date & Time</th>
                                     <th className="p-4 font-bold">Details</th>
-                                    <th className="p-4 font-bold text-right">In (+)</th>
-                                    <th className="p-4 font-bold text-right">Out (-)</th>
+                                    <th className="p-4 font-bold text-right">Amount</th>
+                                    <th className="p-4 font-bold text-right">Balance</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
@@ -253,11 +283,11 @@ export default function VirtualLockerPage() {
                                                     <div className="font-semibold text-slate-800 text-sm mb-1">{tx.description}</div>
                                                     <TypeBadge />
                                                 </td>
-                                                <td className="p-4 text-right font-mono font-black text-emerald-600">
-                                                    {isPos ? `₹ ${absAmount}` : ''}
+                                                <td className={`p-4 text-right font-mono font-black ${isPos ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                                    {isPos ? '+' : '-'} ₹{absAmount}
                                                 </td>
-                                                <td className="p-4 text-right font-mono font-black text-rose-600">
-                                                    {!isPos ? `₹ ${absAmount}` : ''}
+                                                <td className="p-4 text-right font-mono font-black text-slate-700 bg-slate-50/30">
+                                                    ₹{tx.runningBalance?.toLocaleString('en-IN', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
                                                 </td>
                                             </tr>
                                         );

@@ -3,7 +3,7 @@
 import { useAppStore } from '@/store/appStore';
 import { t } from '@/lib/i18n';
 import Link from 'next/link';
-import { FileText, Clock, CheckCircle } from 'lucide-react';
+import { FileText, Clock, CheckCircle, Users, Vault } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 
@@ -70,6 +70,18 @@ export default function ManagerDashboard() {
                     <h3 className="text-slate-500 font-medium text-xs sm:text-base m-0">All Time {t('approved', language)}</h3>
                     <p className="text-2xl sm:text-4xl font-bold text-slate-800 mt-1 sm:mt-2">{loading ? '-' : approvedCount}</p>
                 </div>
+
+                <Link href="/dashboard/admin/employees" className="card border-t-4 border-t-indigo-500 flex flex-col items-center justify-center p-4 sm:p-6 text-center hover:bg-slate-50 transition-all group">
+                    <Users className="text-indigo-500 mb-3 group-hover:scale-110 transition-transform" size={28} />
+                    <h3 className="text-slate-500 font-medium text-xs sm:text-sm m-0">Staff Roster</h3>
+                    <p className="text-[10px] text-slate-400 mt-1 hidden sm:block">Manage employee ledger.</p>
+                </Link>
+
+                <Link href="/dashboard/admin/locker" className="card border-t-4 border-t-emerald-500 flex flex-col items-center justify-center p-4 sm:p-6 text-center hover:bg-slate-50 transition-all group">
+                    <Vault className="text-emerald-500 mb-3 group-hover:scale-110 transition-transform" size={28} />
+                    <h3 className="text-slate-500 font-medium text-xs sm:text-sm m-0">Virtual Locker</h3>
+                    <p className="text-[10px] text-slate-400 mt-1 hidden sm:block">Track station cash float.</p>
+                </Link>
             </div>
 
             {/* Recent Shifts — Table on desktop, Cards on mobile */}

@@ -240,7 +240,27 @@ export default function DsrReport() {
         });
     }, [rawData, prevMonthMeters]);
 
-    const hasData = processedRows.some(d => d.hasData);
+    // ---- Compute Variations (Total - Sale - NextDayOpen) ----
+    const finalRows = useMemo(() => {
+        return processedRows.map((row, idx) => {
+            if (!row.hasData) return { ...row, msVariation: 0, hsdVariation: 0 };
+
+            const nextDay = processedRows[idx + 1];
+            // If we have a next day with data, variation = (Total - Sale) - NextDayOpen
+            // If it's the last day or next day has no data, variation is 0 for now
+            const msVariation = nextDay?.hasData
+                ? (row.msTotalStock - row.msSaleVol) - nextDay.msOpenStock
+                : 0;
+
+            const hsdVariation = nextDay?.hasData
+                ? (row.hsdTotalStock - row.hsdSaleVol) - nextDay.hsdOpenStock
+                : 0;
+
+            return { ...row, msVariation, hsdVariation };
+        });
+    }, [processedRows]);
+
+    const hasData = finalRows.some(d => d.hasData);
     const monthLabel = format(parseISO(`${month}-01`), 'MMMM yyyy').toUpperCase();
 
     const thBase = "py-2 px-2 text-center font-bold text-[10px] border border-slate-300 whitespace-nowrap";
@@ -292,7 +312,7 @@ export default function DsrReport() {
 
                     {/* ======= PETROL SECTION ======= */}
                     <div className="overflow-x-auto hide-scrollbar">
-                        <table className="w-full border-collapse text-xs" style={{ minWidth: '920px' }}>
+                        <table className="w-full border-collapse text-xs" style={{ minWidth: '1000px' }}>
                             <thead>
                                 <tr>
                                     <th className={`${thBase} bg-yellow-300 text-yellow-900`} rowSpan={2}>
@@ -303,7 +323,7 @@ export default function DsrReport() {
                                         Petrol DSR Record <span className="font-normal text-[9px]">(S1 Opening Meter)</span>
                                     </th>
                                     <th className={`${thBase} bg-teal-300 text-teal-900`}>Testing</th>
-                                    <th className={`${thBase} bg-teal-200 text-teal-900`} colSpan={2}>Sales</th>
+                                    <th className={`${thBase} bg-teal-200 text-teal-900`} colSpan={3}>Sales & Variation</th>
                                 </tr>
                                 <tr>
                                     <th className={`${thBase} bg-orange-100 text-orange-800`}>DIP-MS (cm)</th>
@@ -317,10 +337,11 @@ export default function DsrReport() {
                                     <th className={`${thBase} bg-teal-100 text-teal-800`}>Petrol (L)</th>
                                     <th className={`${thBase} bg-teal-50 text-teal-900`}>Sales (L)</th>
                                     <th className={`${thBase} bg-teal-50 text-teal-900`}>Cum. Sales (L)</th>
+                                    <th className={`${thBase} bg-rose-100 text-rose-900`}>Variation (L)</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {processedRows.map((row, idx) => (
+                                {finalRows.map((row, idx) => (
                                     <tr key={row.date}
                                         className={`${row.hasData ? '' : 'text-slate-300'} ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'} hover:bg-orange-50/20 transition-colors`}>
                                         <td className={`${tdLabel} text-center bg-slate-100`}>{format(parseISO(row.date), 'd/M/yy')}</td>
@@ -338,6 +359,16 @@ export default function DsrReport() {
                                         </td>
                                         <td className={`${tdBase} font-bold text-blue-800 bg-blue-50/30`}>
                                             {row.hasData ? row.cumPetrol.toFixed(2) : ''}
+                                        </td>
+                                        <td className={`${tdBase} font-black ${row.hasData ? (row.msVariation > 0 ? 'text-red-600' : 'text-emerald-600') : ''} bg-rose-50/20 text-center`}>
+                                            {row.hasData && idx < finalRows.length - 1 && finalRows[idx + 1].hasData ? (
+                                                <div className="flex flex-col leading-none py-1">
+                                                    <span className="text-xs">{Math.abs(row.msVariation).toFixed(2)}</span>
+                                                    <span className="text-[7.5px] uppercase font-black mt-0.5">
+                                                        {row.msVariation > 0 ? 'Loss' : 'Gain'}
+                                                    </span>
+                                                </div>
+                                            ) : '-'}
                                         </td>
                                     </tr>
                                 ))}
@@ -358,7 +389,7 @@ export default function DsrReport() {
                                         Diesel DSR Record <span className="font-normal text-[9px]">(S1 Opening Meter)</span>
                                     </th>
                                     <th className={`${thBase} bg-teal-300 text-teal-900`}>Testing</th>
-                                    <th className={`${thBase} bg-teal-200 text-teal-900`} colSpan={2}>Sales</th>
+                                    <th className={`${thBase} bg-teal-200 text-teal-900`} colSpan={3}>Sales & Variation</th>
                                 </tr>
                                 <tr>
                                     <th className={`${thBase} bg-orange-100 text-orange-800`}>HSD-1 (cm)</th>
@@ -375,10 +406,11 @@ export default function DsrReport() {
                                     <th className={`${thBase} bg-teal-100 text-teal-800`}>Diesel (L)</th>
                                     <th className={`${thBase} bg-teal-50 text-teal-900`}>Sales (L)</th>
                                     <th className={`${thBase} bg-teal-50 text-teal-900`}>Cum. Sales (L)</th>
+                                    <th className={`${thBase} bg-rose-100 text-rose-900`}>Variation (L)</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {processedRows.map((row, idx) => (
+                                {finalRows.map((row, idx) => (
                                     <tr key={row.date}
                                         className={`${row.hasData ? '' : 'text-slate-300'} ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'} hover:bg-amber-50/20 transition-colors`}>
                                         <td className={`${tdLabel} text-center bg-slate-100`}>{format(parseISO(row.date), 'd/M/yy')}</td>
@@ -399,6 +431,16 @@ export default function DsrReport() {
                                         </td>
                                         <td className={`${tdBase} font-bold text-orange-800 bg-orange-50/30`}>
                                             {row.hasData ? row.cumDiesel.toFixed(2) : ''}
+                                        </td>
+                                        <td className={`${tdBase} font-black ${row.hasData ? (row.hsdVariation > 0 ? 'text-red-600' : 'text-emerald-600') : ''} bg-rose-50/20 text-center`}>
+                                            {row.hasData && idx < finalRows.length - 1 && finalRows[idx + 1].hasData ? (
+                                                <div className="flex flex-col leading-none py-1">
+                                                    <span className="text-xs">{Math.abs(row.hsdVariation).toFixed(2)}</span>
+                                                    <span className="text-[7.5px] uppercase font-black mt-0.5">
+                                                        {row.hsdVariation > 0 ? 'Loss' : 'Gain'}
+                                                    </span>
+                                                </div>
+                                            ) : '-'}
                                         </td>
                                     </tr>
                                 ))}

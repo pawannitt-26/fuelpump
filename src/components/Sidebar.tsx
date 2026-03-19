@@ -23,11 +23,7 @@ export default function Sidebar() {
             label: t('newShift', language),
             icon: <FileText size={20} />
         }] : []),
-        ...(isAdmin ? [{
-            href: '/dashboard/admin/rates',
-            label: t('updateRates', language),
-            icon: <IndianRupee size={20} />
-        }, {
+        ...(isAdmin || user?.role === 'Manager' ? [{
             href: '/dashboard/admin/employees',
             label: t('employees', language as keyof typeof t),
             icon: <Users size={20} />
@@ -35,6 +31,11 @@ export default function Sidebar() {
             href: '/dashboard/admin/locker',
             label: t('virtualLocker', language as keyof typeof t),
             icon: <Vault size={20} />
+        }] : []),
+        ...(isAdmin ? [{
+            href: '/dashboard/admin/rates',
+            label: t('updateRates', language),
+            icon: <IndianRupee size={20} />
         }] : []),
         {
             href: '/dsr',

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAppStore } from '@/store/appStore';
 import { supabase } from '@/lib/supabase';
-import { Users, Plus, UserPlus, Power, AlertCircle, TrendingUp, History, Download, X, IndianRupee } from 'lucide-react';
+import { Users, Plus, UserPlus, Power, AlertCircle, History, X, IndianRupee } from 'lucide-react';
 
 interface Employee {
     id: string;
@@ -37,6 +37,7 @@ export default function EmployeesPage() {
     const [txType, setTxType] = useState<'advance' | 'settlement'>('advance');
     const [txAmount, setTxAmount] = useState('');
     const [txDesc, setTxDesc] = useState('');
+    const [txDate, setTxDate] = useState(new Date().toISOString().substring(0, 10));
 
     useEffect(() => {
         fetchEmployees();
@@ -140,7 +141,8 @@ export default function EmployeesPage() {
                 employee_id: selectedEmp.id,
                 type: txType,
                 amount: amount,
-                description: desc
+                description: desc,
+                created_at: new Date(txDate).toISOString()
             }]);
 
         if (!txError) {
@@ -148,7 +150,8 @@ export default function EmployeesPage() {
             await supabase.from('locker_transactions').insert([{
                 type: txType === 'advance' ? 'employee_advance' : 'shift_deposit',
                 amount: txType === 'advance' ? amount : Math.abs(amount),
-                description: `${txType === 'advance' ? 'Advance to' : 'Settlement from'} ${selectedEmp.name}`
+                description: `${txType === 'advance' ? 'Advance to' : 'Settlement from'} ${selectedEmp.name}`,
+                created_at: new Date(txDate).toISOString()
             }]);
 
             setTxAmount('');
@@ -159,7 +162,7 @@ export default function EmployeesPage() {
         setIsSubmitting(false);
     };
 
-    if (user?.role !== 'Admin') {
+    if (user?.role !== 'Admin' && user?.role !== 'Manager') {
         return <div className="p-8 text-center text-red-500 font-bold">Access Denied</div>;
     }
 
@@ -184,7 +187,7 @@ export default function EmployeesPage() {
                         </h2>
                         <form onSubmit={handleAddEmployee} className="space-y-3 sm:space-y-4">
                             <div>
-                                <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 or-2">Full Name</label>
+                                <label className="block text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 sm:mb-2">Full Name</label>
                                 <input
                                     type="text"
                                     required
@@ -359,6 +362,10 @@ export default function EmployeesPage() {
                                                     Receive Settle
                                                 </button>
                                             </div>
+                                        </div>
+                                        <div>
+                                            <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Date</label>
+                                            <input type="date" required className="input-field w-full rounded-xl p-2.5 text-sm font-bold bg-slate-50 border-slate-200" value={txDate} onChange={(e) => setTxDate(e.target.value)} disabled={isSubmitting} />
                                         </div>
                                         <div>
                                             <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">Amount (₹)</label>

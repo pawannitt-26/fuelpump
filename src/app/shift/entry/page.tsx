@@ -27,7 +27,7 @@ interface SideEntry {
     side: 'A' | 'B';
     label: string;
     nozzleMan: string;
-    employeeId?: string;
+    employeeId: string;
     cash: number;
     online: number;
     ghatti: number;
@@ -65,10 +65,10 @@ function ShiftEntryContent() {
 
     // Manage state for the 4 sides
     const [sides, setSides] = useState<SideEntry[]>([
-        { id: 'Front-A', machine: 'Front', side: 'A', label: '1 & 3', nozzleMan: '', cash: 0, online: 0, ghatti: 0 },
-        { id: 'Front-B', machine: 'Front', side: 'B', label: '2 & 4', nozzleMan: '', cash: 0, online: 0, ghatti: 0 },
-        { id: 'Back-A', machine: 'Back', side: 'A', label: '1 & 3', nozzleMan: '', cash: 0, online: 0, ghatti: 0 },
-        { id: 'Back-B', machine: 'Back', side: 'B', label: '2 & 4', nozzleMan: '', cash: 0, online: 0, ghatti: 0 },
+        { id: 'Front-A', machine: 'Front', side: 'A', label: '1 & 3', nozzleMan: '', employeeId: '', cash: 0, online: 0, ghatti: 0 },
+        { id: 'Front-B', machine: 'Front', side: 'B', label: '2 & 4', nozzleMan: '', employeeId: '', cash: 0, online: 0, ghatti: 0 },
+        { id: 'Back-A', machine: 'Back', side: 'A', label: '1 & 3', nozzleMan: '', employeeId: '', cash: 0, online: 0, ghatti: 0 },
+        { id: 'Back-B', machine: 'Back', side: 'B', label: '2 & 4', nozzleMan: '', employeeId: '', cash: 0, online: 0, ghatti: 0 },
     ]);
 
     // Dedicated state for Lube Sales
@@ -179,6 +179,7 @@ function ShiftEntryContent() {
                                     side: s.side === '1 & 3' ? 'A' : 'B',
                                     label: s.side,
                                     nozzleMan: s.nozzle_man,
+                                    employeeId: s.employee_id || '',
                                     cash: parseFloat(s.cash_received) || 0,
                                     online: parseFloat(s.online_received) || 0,
                                     ghatti: parseFloat(s.ghatti) || 0
@@ -249,11 +250,55 @@ function ShiftEntryContent() {
     };
 
     const updateSide = (id: string, field: keyof SideEntry, value: string | number) => {
-        setSides(sides.map(s => s.id === id ? { ...s, [field]: value } : s));
+        setSides(prev => prev.map(s => {
+            if (s.id !== id) return s;
+            let updated = { ...s, [field]: value };
+
+            // Sync name if ID changes
+            if (field === 'employeeId') {
+                const emp = employees.find(e => e.id === value);
+                updated.nozzleMan = emp ? emp.name : '';
+            }
+
+            // Auto-calculate Ghatti
+            const sideEntries = entries.filter(e => e.machine === s.machine && e.side === s.side);
+            const expectedValue = sideEntries.reduce((sum, e) => {
+                const qty = (e.closing || 0) - (e.opening || 0) - (e.testing || 0);
+                return sum + (qty * (e.rate || 0));
+            }, 0);
+            const currentCash = field === 'cash' ? Number(value) : s.cash;
+            const currentOnline = field === 'online' ? Number(value) : s.online;
+            const variance = (currentCash + currentOnline) - expectedValue;
+            updated.ghatti = variance < 0 ? Math.abs(variance) : 0;
+
+            return updated;
+        }));
     };
 
     const updateSideProperty = (machine: string, side: string, field: keyof SideEntry, value: string | number) => {
-        setSides(sides.map(s => (s.machine === machine && s.side === side) ? { ...s, [field]: value } : s));
+        setSides(prev => prev.map(s => {
+            if (s.machine !== machine || s.side !== side) return s;
+            let updated = { ...s, [field]: value };
+
+            // Sync name if ID changes
+            if (field === 'employeeId') {
+                const emp = employees.find(e => e.id === value);
+                updated.nozzleMan = emp ? emp.name : '';
+            }
+
+            // Auto-calculate Ghatti
+            const sideEntries = entries.filter(e => e.machine === machine && e.side === side);
+            const expectedValue = sideEntries.reduce((sum, e) => {
+                const qty = (e.closing || 0) - (e.opening || 0) - (e.testing || 0);
+                return sum + (qty * (e.rate || 0));
+            }, 0);
+            const currentCash = field === 'cash' ? Number(value) : s.cash;
+            const currentOnline = field === 'online' ? Number(value) : s.online;
+            const variance = (currentCash + currentOnline) - expectedValue;
+            updated.ghatti = variance < 0 ? Math.abs(variance) : 0;
+
+            return updated;
+        }));
     };
 
     // Helper to calculate totals for a specific side
@@ -296,9 +341,22 @@ function ShiftEntryContent() {
             const sideVal = linkedValues[sideIndex];
 
             // Proportional split (to keep variance near zero on all sides if possible)
-            let splitAmount = combinedValue > 0 ? (sideVal / combinedValue) * totalValue : totalValue / linkedSides.length;
+            let splitValue = combinedValue > 0 ? (sideVal / combinedValue) * totalValue : totalValue / linkedSides.length;
+            const newFieldVal = parseFloat(splitValue.toFixed(2));
 
-            return { ...s, [field]: parseFloat(splitAmount.toFixed(2)) };
+            // Auto-calculate Ghatti for this split
+            const sideEntries = entries.filter(e => e.machine === s.machine && e.side === s.side);
+            const expectedSideValue = sideEntries.reduce((sum, e) => {
+                const qty = (e.closing || 0) - (e.opening || 0) - (e.testing || 0);
+                return sum + (qty * (e.rate || 0));
+            }, 0);
+
+            const currentCash = field === 'cash' ? newFieldVal : s.cash;
+            const currentOnline = field === 'online' ? newFieldVal : s.online;
+            const variance = (currentCash + currentOnline) - expectedSideValue;
+            const ghattiVal = variance < 0 ? Math.abs(variance) : 0;
+
+            return { ...s, [field]: newFieldVal, ghatti: parseFloat(ghattiVal.toFixed(2)) };
         }));
     };
 
@@ -424,6 +482,7 @@ function ShiftEntryContent() {
                 machine: s.machine,
                 side: s.label,
                 nozzle_man: s.nozzleMan || 'Unassigned',
+                employee_id: s.employeeId || null,
                 cash_received: s.cash || 0,
                 online_received: s.online || 0,
                 lube_sales: 0,
@@ -436,6 +495,7 @@ function ShiftEntryContent() {
                 machine: 'Lube' as any,
                 side: 'Sales',
                 nozzle_man: 'Manager',
+                employee_id: null,
                 cash_received: lubeState.cash || 0,
                 online_received: lubeState.online || 0,
                 lube_sales: lubeState.total || 0,
@@ -447,18 +507,16 @@ function ShiftEntryContent() {
 
             // 3a. Record Employee Losses for any Ghatti > 0
             const empTxInserts = sides
-                .filter(s => s.ghatti > 0 && s.nozzleMan && s.nozzleMan !== 'Unassigned') // Ensure there's a loss and an employee selected
+                .filter(s => s.ghatti > 0 && s.employeeId) // Ensure there's a loss and an employee ID
                 .map(s => {
-                    const empId = employees.find(e => e.name === s.nozzleMan)?.id;
-                    if (!empId) return null;
                     return {
-                        employee_id: empId,
+                        employee_id: s.employeeId,
                         type: 'loss',
                         amount: s.ghatti,
                         description: `Shortage (Ghatti) on ${s.machine} Side ${s.label} (${date} Shift ${shift})`,
                         shift_id: shiftId
                     };
-                }).filter(Boolean);
+                });
 
             if (empTxInserts.length > 0) {
                 await supabase.from('employee_transactions').insert(empTxInserts);
