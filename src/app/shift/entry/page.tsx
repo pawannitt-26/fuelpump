@@ -522,7 +522,8 @@ function ShiftEntryContent() {
                         type: 'loss',
                         amount: s.ghatti,
                         description: `Shortage (Ghatti) on ${s.machine} Side ${s.label} (${date} Shift ${shift})`,
-                        shift_id: shiftId
+                        shift_id: shiftId,
+                        created_at: new Date(date).toISOString()
                     };
                 });
 
@@ -561,7 +562,8 @@ function ShiftEntryContent() {
                     type: 'shift_deposit',
                     amount: lockerDeposit,
                     description: `Shift Deposit (${date} Shift ${shift})`,
-                    shift_id: shiftId
+                    shift_id: shiftId,
+                    created_at: new Date(date).toISOString()
                 }]);
                 if (lockerError) console.warn('Locker save failed:', lockerError);
             }
