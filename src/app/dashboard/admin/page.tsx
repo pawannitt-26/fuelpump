@@ -143,6 +143,7 @@ export default function AdminDashboard() {
         const sortedKeys = Object.keys(grouped).map(Number).sort((a, b) => a - b);
         return sortedKeys.map(sn => ({
             shiftNumber: sn,
+            shiftId: grouped[sn][0]?.id, // Pick the id from the first shift found for that shift number
             stats: aggregateShifts(grouped[sn])
         }));
     }, [allShifts, selectedDate]);
@@ -399,6 +400,13 @@ export default function AdminDashboard() {
                                                                     <div className="text-sm font-bold text-slate-600">{sw.stats.hsdVol.toLocaleString('en-IN', { maximumFractionDigits: 1 })} L</div>
                                                                 </div>
                                                             </div>
+                                                            {sw.shiftId && (
+                                                                <div className="mt-4 pt-4 border-t border-slate-100 flex justify-end">
+                                                                    <Link href={`/shift/review/${sw.shiftId}`} className="flex items-center gap-1.5 btn hover:bg-slate-100 py-1.5 px-3 rounded-lg text-xs font-bold text-blue-600 border border-blue-200 bg-blue-50 transition-colors">
+                                                                        <History size={14} /> View Report
+                                                                    </Link>
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     ))}
                                                 </div>
@@ -446,22 +454,16 @@ export default function AdminDashboard() {
                                 <th className="px-6 py-4">{t('date', language)}</th>
                                 <th className="px-6 py-4">{t('shift', language)}</th>
                                 <th className="px-6 py-4">{t('managerName', language)}</th>
-                                <th className="px-6 py-4 text-right">{t('totalSale', language)}</th>
-                                <th className="px-6 py-4 text-right">{t('difference', language)}</th>
                                 <th className="px-6 py-4 text-center">Action</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                            {loading && <tr><td colSpan={6} className="px-6 py-8 text-center text-slate-500">Loading...</td></tr>}
+                            {loading && <tr><td colSpan={4} className="px-6 py-8 text-center text-slate-500">Loading...</td></tr>}
                             {!loading && pending.map(s => (
                                 <tr key={s.id} className="hover:bg-slate-50 transition-colors group">
                                     <td className="px-6 py-4 text-slate-700 font-medium">{s.date}</td>
                                     <td className="px-6 py-4 text-slate-700">Shift {s.shift}</td>
                                     <td className="px-6 py-4 text-slate-600">{s.manager}</td>
-                                    <td className="px-6 py-4 text-slate-800 font-bold text-right">₹ {s.total.toLocaleString('en-IN')}</td>
-                                    <td className={`px-6 py-4 text-right font-bold ${s.diff < 0 ? 'text-danger-text' : s.diff > 0 ? 'text-success-text' : 'text-slate-400'}`}>
-                                        {s.diff !== 0 ? `₹ ${s.diff.toLocaleString('en-IN')}` : '-'}
-                                    </td>
                                     <td className="px-6 py-4 text-center">
                                         <Link
                                             href={`/shift/review/${s.id}`}
@@ -474,7 +476,7 @@ export default function AdminDashboard() {
                             ))}
                             {!loading && pending.length === 0 && (
                                 <tr>
-                                    <td colSpan={6} className="px-6 py-12 text-center text-slate-500">
+                                    <td colSpan={4} className="px-6 py-12 text-center text-slate-500">
                                         <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
                                             <AlertTriangle size={24} />
                                         </div>
@@ -498,12 +500,6 @@ export default function AdminDashboard() {
                                     <div className="text-xs text-slate-500 mt-0.5">{s.manager}</div>
                                 </div>
                                 <Link href={`/shift/review/${s.id}`} className="btn btn-primary py-1.5 px-3 text-xs">Review</Link>
-                            </div>
-                            <div className="flex gap-4 text-xs">
-                                <span className="text-slate-600">Total: <strong>₹{s.total.toLocaleString('en-IN')}</strong></span>
-                                <span className={s.diff < 0 ? 'text-red-500 font-bold' : s.diff > 0 ? 'text-emerald-600 font-bold' : 'text-slate-400'}>
-                                    Diff: {s.diff !== 0 ? `₹${s.diff.toLocaleString('en-IN')}` : '-'}
-                                </span>
                             </div>
                         </div>
                     ))}

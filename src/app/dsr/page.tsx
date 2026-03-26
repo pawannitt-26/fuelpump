@@ -5,7 +5,7 @@ import { Download, FileSpreadsheet, Calendar, Loader2 } from 'lucide-react';
 import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { generatePDF } from '@/lib/pdf';
-import { format, getDaysInMonth, parseISO, subMonths } from 'date-fns';
+import { format, getDaysInMonth, parseISO, subMonths, addDays } from 'date-fns';
 
 // ---- Dip-to-Volume Lookup Table (cm -> Liters) via linear interpolation ----
 const DIP_TABLE: Record<number, number> = {
@@ -59,21 +59,21 @@ export default function DsrReport() {
     const [month, setMonth] = useState(new Date().toISOString().substring(0, 7));
     const [loading, setLoading] = useState(false);
     const [rawData, setRawData] = useState<DayData[]>([]);
-    // Baseline: opening meters from last approved shift of the PREVIOUS month
-    const [prevMonthMeters, setPrevMonthMeters] = useState<BaselineMeters>({});
+
 
     useEffect(() => {
         async function fetchAll() {
             setLoading(true);
             setRawData([]);
-            setPrevMonthMeters({});
 
             try {
                 const startDate = `${month}-01`;
                 const daysInMonth = getDaysInMonth(parseISO(startDate));
                 const endDate = `${month}-${String(daysInMonth).padStart(2, '0')}`;
 
-                // ---- Fetch current month shifts ----
+                const nextMonth1st = format(addDays(parseISO(endDate), 1), 'yyyy-MM-dd');
+
+                // ---- Fetch current month shifts + 1st day of next month ----
                 const { data: shifts } = await supabase
                     .from('shifts')
                     .select(`
@@ -81,9 +81,8 @@ export default function DsrReport() {
             shift_entries ( nozzle_no, opening_meter, testing_qty ),
             shift_tanks ( tank_name, manual_dip )
           `)
-                    .eq('status', 'Approved')
                     .gte('shift_date', startDate)
-                    .lte('shift_date', endDate)
+                    .lte('shift_date', nextMonth1st)
                     .order('shift_date', { ascending: true })
                     .order('shift_number', { ascending: true });
 
@@ -93,36 +92,15 @@ export default function DsrReport() {
                     const dateStr = `${month}-${String(d).padStart(2, '0')}`;
                     dayMap.set(dateStr, { date: dateStr, shifts: [] });
                 }
+                dayMap.set(nextMonth1st, { date: nextMonth1st, shifts: [] });
+
                 (shifts || []).forEach((s: any) => {
                     const day = dayMap.get(s.shift_date);
                     if (day) day.shifts.push(s);
                 });
                 setRawData(Array.from(dayMap.values()));
 
-                // ---- Fetch PREVIOUS month's last approved Shift 1 as baseline ----
-                const prevMonthDate = subMonths(parseISO(startDate), 1);
-                const prevMonth = format(prevMonthDate, 'yyyy-MM');
-                const prevDays = getDaysInMonth(prevMonthDate);
-                const prevStart = `${prevMonth}-01`;
-                const prevEnd = `${prevMonth}-${String(prevDays).padStart(2, '0')}`;
 
-                const { data: prevShifts } = await supabase
-                    .from('shifts')
-                    .select(`id, shift_date, shift_number, shift_entries ( nozzle_no, opening_meter )`)
-                    .eq('status', 'Approved')
-                    .eq('shift_number', 1)
-                    .gte('shift_date', prevStart)
-                    .lte('shift_date', prevEnd)
-                    .order('shift_date', { ascending: false })
-                    .limit(1);
-
-                const baseline: BaselineMeters = {};
-                if (prevShifts && prevShifts.length > 0) {
-                    (prevShifts[0].shift_entries || []).forEach((e: any) => {
-                        baseline[e.nozzle_no] = parseFloat(e.opening_meter) || 0;
-                    });
-                }
-                setPrevMonthMeters(baseline);
 
             } catch (err) {
                 console.error('DSR fetch error', err);
@@ -135,21 +113,71 @@ export default function DsrReport() {
 
     // ---- Build one row per date ----
     const processedRows = useMemo(() => {
-        // Cumulative starts from 0; the first day's known sales are injected via the init constants
-        let cumPetrol = 0;
-        let cumDiesel = 0;
+        const getMetersForShifts = (shifts: any[]) => {
+            const getOpen = (no: string) => {
+                const s2 = shifts.find((s: any) => s.shift_number === 2);
+                const s2Rec = s2?.shift_entries?.find((e: any) => e.nozzle_no === no);
+                if (s2Rec) return parseFloat(s2Rec.opening_meter) || 0;
+                const s1 = shifts.find((s: any) => s.shift_number === 1);
+                const s1Rec = s1?.shift_entries?.find((e: any) => e.nozzle_no === no);
+                if (s1Rec) return parseFloat(s1Rec.opening_meter) || 0;
+                const targetEntries = shifts.flatMap((s: any) => s.shift_entries || []).filter((e: any) => e.nozzle_no === no);
+                if (targetEntries.length === 0) return 0;
+                const minVal = Math.min(...targetEntries.map((e: any) => parseFloat(e.opening_meter) || 0));
+                return isFinite(minVal) ? minVal : 0;
+            };
+            const meters: Record<string, number> = {};
+            [...MS_NOZZLES, ...HSD_NOZZLES].forEach(no => meters[no] = getOpen(no));
+            return meters;
+        };
 
-        // Rolling baseline from prev month. When empty, we have no meter reference.
-        const noPrevData = Object.keys(prevMonthMeters).length === 0;
-        let prevMeters: BaselineMeters = { ...prevMonthMeters };
-        let usedFirstDayOverride = false; // ensures init constants only apply to exactly day 1
-
-        return rawData.map(day => {
-            const s1 = day.shifts.find((s: any) => s.shift_number === 1);
+        const daySummaries = rawData.map(day => {
             const allShifts = day.shifts;
-            const tanks: any[] = s1?.shift_tanks || allShifts.flatMap((s: any) => s.shift_tanks || []);
+            const meters = getMetersForShifts(allShifts);
 
-            if (!s1) {
+            const allEntries = allShifts.flatMap((s: any) => s.shift_entries || []);
+            const getTestSum = (nozzles: string[]) =>
+                allEntries.filter((e: any) => nozzles.includes(e.nozzle_no))
+                    .reduce((sum: number, e: any) => sum + (parseFloat(e.testing_qty) || 0), 0);
+
+            const msTesting = getTestSum(MS_NOZZLES);
+            const hsdTesting = getTestSum(HSD_NOZZLES);
+
+            const tanks: any[] = allShifts.flatMap((s: any) => s.shift_tanks || []);
+            const getValidDip = (tankName: string) => {
+                const matches = tanks.filter((t: any) => t.tank_name === tankName);
+                if (matches.length === 0) return 0;
+                const validMatch = matches.slice().reverse().find((t: any) => {
+                    const val = parseFloat(t.manual_dip);
+                    return !isNaN(val) && val > 0;
+                });
+                return validMatch ? parseFloat(validMatch.manual_dip) : 0;
+            };
+
+            const msReceipt = allShifts.reduce((sum: number, s: any) => sum + (parseFloat(s.ms_receipt) || 0), 0);
+            const hsdReceipt = allShifts.reduce((sum: number, s: any) => sum + (parseFloat(s.hsd_receipt) || 0), 0);
+
+            return {
+                date: day.date,
+                shifts: allShifts,
+                hasData: allShifts.length > 0,
+                meters,
+                msTesting,
+                hsdTesting,
+                dipMS: getValidDip('3-MS'),
+                dip1HSD: getValidDip('1-HSD'),
+                dip2HSD: getValidDip('2-HSD'),
+                msReceipt,
+                hsdReceipt,
+            };
+        });
+
+        let cumPetrol = DSR_INIT_CUM_PETROL;
+        let cumDiesel = DSR_INIT_CUM_DIESEL;
+
+        // Strip the extra 1st-of-next-month day from the actual table
+        return daySummaries.slice(0, -1).map((day, idx) => {
+            if (!day.hasData) {
                 return {
                     date: day.date, hasData: false,
                     dipMS: 0, msOpenStock: 0, msReceipt: 0, msTotalStock: 0,
@@ -162,83 +190,49 @@ export default function DsrReport() {
                 };
             }
 
-            const s1Entries: any[] = s1.shift_entries || [];
-            const currentMeters: BaselineMeters = {};
-            s1Entries.forEach((e: any) => {
-                currentMeters[e.nozzle_no] = parseFloat(e.opening_meter) || 0;
-            });
+            // To calculate sales, find the next valid day's meters
+            const nextValidDay = daySummaries.slice(idx + 1).find(d => d.hasData);
 
-            const getOpen = (no: string) => currentMeters[no] || 0;
-            const getPrev = (no: string) => prevMeters[no] || 0;
+            let msSaleVol = 0;
+            let hsdSaleVol = 0;
 
-            const allEntries = allShifts.flatMap((s: any) => s.shift_entries || []);
-            const getTestSum = (nozzles: string[]) =>
-                allEntries.filter((e: any) => nozzles.includes(e.nozzle_no))
-                    .reduce((sum: number, e: any) => sum + (parseFloat(e.testing_qty) || 0), 0);
-
-            const msTesting = getTestSum(MS_NOZZLES);
-            const hsdTesting = getTestSum(HSD_NOZZLES);
-
-            let msSaleVol: number;
-            let hsdSaleVol: number;
-
-            if (noPrevData && !usedFirstDayOverride) {
-                // First data day of the very first tracked month — use the known starting sales directly
-                msSaleVol = DSR_INIT_CUM_PETROL;
-                hsdSaleVol = DSR_INIT_CUM_DIESEL;
-                usedFirstDayOverride = true;
-            } else {
-                // Normal formula: Σ(current_DSR - prev_DSR) - testing
-                msSaleVol = MS_NOZZLES.reduce((sum, no) => sum + (getOpen(no) - getPrev(no)), 0) - msTesting;
-                hsdSaleVol = HSD_NOZZLES.reduce((sum, no) => sum + (getOpen(no) - getPrev(no)), 0) - hsdTesting;
+            if (nextValidDay) {
+                msSaleVol = MS_NOZZLES.reduce((sum, no) => sum + (nextValidDay.meters[no] - day.meters[no]), 0) - day.msTesting;
+                hsdSaleVol = HSD_NOZZLES.reduce((sum, no) => sum + (nextValidDay.meters[no] - day.meters[no]), 0) - day.hsdTesting;
             }
 
-            cumPetrol += Math.max(0, msSaleVol);
-            cumDiesel += Math.max(0, hsdSaleVol);
+            // Prevent negative sales if something was entered wrong
+            msSaleVol = Math.max(0, msSaleVol);
+            hsdSaleVol = Math.max(0, hsdSaleVol);
 
-            // ---- Tank dips ----
-            const tank3MS = tanks.find((t: any) => t.tank_name === '3-MS');
-            const tank1HSD = tanks.find((t: any) => t.tank_name === '1-HSD');
-            const tank2HSD = tanks.find((t: any) => t.tank_name === '2-HSD');
+            // Cumulative ONLY increases for real calculated sales
+            cumPetrol += msSaleVol;
+            cumDiesel += hsdSaleVol;
 
-            const dipMS = parseFloat(tank3MS?.manual_dip) || 0;
-            const dip1HSD = parseFloat(tank1HSD?.manual_dip) || 0;
-            const dip2HSD = parseFloat(tank2HSD?.manual_dip) || 0;
-            const msOpenStock = dipToLiters(dipMS);
-            const hsd1Vol = dipToLiters(dip1HSD);
-            const hsd2Vol = dipToLiters(dip2HSD);
+            const msOpenStock = dipToLiters(day.dipMS);
+            const hsd1Vol = dipToLiters(day.dip1HSD);
+            const hsd2Vol = dipToLiters(day.dip2HSD);
             const hsdOpenStock = hsd1Vol + hsd2Vol;
-
-            // Fuel receipts from all shifts on this day
-            const msReceipt = allShifts.reduce((sum: number, s: any) => sum + (parseFloat(s.ms_receipt) || 0), 0);
-            const hsdReceipt = allShifts.reduce((sum: number, s: any) => sum + (parseFloat(s.hsd_receipt) || 0), 0);
-
-            // Advance rolling baseline for next day
-            prevMeters = { ...prevMeters, ...currentMeters };
 
             return {
                 date: day.date,
                 hasData: true,
-                // Petrol DIP
-                dipMS, msOpenStock, msReceipt, msTotalStock: msOpenStock + msReceipt,
-                // Petrol DSR (S1 opening meters)
-                msD1: getOpen('Front-3'),
-                msD2: getOpen('Front-4'),
-                msD3: getOpen('Back-3'),
-                msD4: getOpen('Back-4'),
-                msTesting, msSaleVol, cumPetrol,
-                // Diesel DIP
-                dip1HSD, hsd1Vol, dip2HSD, hsd2Vol,
-                hsdOpenStock, hsdReceipt, hsdTotalStock: hsdOpenStock + hsdReceipt,
-                // Diesel DSR (S1 opening meters)
-                hsdD1: getOpen('Front-1'),
-                hsdD2: getOpen('Front-2'),
-                hsdD3: getOpen('Back-1'),
-                hsdD4: getOpen('Back-2'),
-                hsdTesting, hsdSaleVol, cumDiesel,
+                dipMS: day.dipMS, msOpenStock, msReceipt: day.msReceipt, msTotalStock: msOpenStock + day.msReceipt,
+                msD1: day.meters['Back-3'],
+                msD2: day.meters['Back-4'],
+                msD3: day.meters['Front-3'],
+                msD4: day.meters['Front-4'],
+                msTesting: day.msTesting, msSaleVol, cumPetrol,
+                dip1HSD: day.dip1HSD, hsd1Vol, dip2HSD: day.dip2HSD, hsd2Vol,
+                hsdOpenStock, hsdReceipt: day.hsdReceipt, hsdTotalStock: hsdOpenStock + day.hsdReceipt,
+                hsdD1: day.meters['Back-1'],
+                hsdD2: day.meters['Back-2'],
+                hsdD3: day.meters['Front-1'],
+                hsdD4: day.meters['Front-2'],
+                hsdTesting: day.hsdTesting, hsdSaleVol, cumDiesel,
             };
         });
-    }, [rawData, prevMonthMeters]);
+    }, [rawData]);
 
     // ---- Compute Variations (Total - Sale - NextDayOpen) ----
     const finalRows = useMemo(() => {
@@ -299,7 +293,7 @@ export default function DsrReport() {
             {!loading && !hasData && (
                 <div className="card flex flex-col justify-center items-center gap-4 py-32 rounded-3xl border border-slate-100 bg-slate-50">
                     <FileSpreadsheet size={48} className="text-slate-300" />
-                    <p className="text-slate-500 font-medium text-lg">No approved shifts in {monthLabel}.</p>
+                    <p className="text-slate-500 font-medium text-lg">No shifts in {monthLabel}.</p>
                 </div>
             )}
 
@@ -320,7 +314,7 @@ export default function DsrReport() {
                                     </th>
                                     <th className={`${thBase} bg-orange-300 text-orange-900`} colSpan={4}>Petrol DIP Readings</th>
                                     <th className={`${thBase} bg-teal-300 text-teal-900`} colSpan={4}>
-                                        Petrol DSR Record <span className="font-normal text-[9px]">(S1 Opening Meter)</span>
+                                        Petrol DSR Record <span className="font-normal text-[9px]">(S2 Opening Meter)</span>
                                     </th>
                                     <th className={`${thBase} bg-teal-300 text-teal-900`}>Testing</th>
                                     <th className={`${thBase} bg-teal-200 text-teal-900`} colSpan={3}>Sales & Variation</th>
@@ -330,10 +324,10 @@ export default function DsrReport() {
                                     <th className={`${thBase} bg-orange-100 text-orange-800`}>Opening Stock (L)</th>
                                     <th className={`${thBase} bg-orange-100 text-orange-800`}>Receipt (L)</th>
                                     <th className={`${thBase} bg-orange-100 text-orange-800`}>Total Stocks (L)</th>
-                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-1<br /><span className="font-normal text-[9px]">F-Noz 3</span></th>
-                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-2<br /><span className="font-normal text-[9px]">F-Noz 4</span></th>
-                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-3<br /><span className="font-normal text-[9px]">B-Noz 3</span></th>
-                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-4<br /><span className="font-normal text-[9px]">B-Noz 4</span></th>
+                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-1<br /><span className="font-normal text-[9px]">B-Noz 3</span></th>
+                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-2<br /><span className="font-normal text-[9px]">B-Noz 4</span></th>
+                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-3<br /><span className="font-normal text-[9px]">F-Noz 3</span></th>
+                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-4<br /><span className="font-normal text-[9px]">F-Noz 4</span></th>
                                     <th className={`${thBase} bg-teal-100 text-teal-800`}>Petrol (L)</th>
                                     <th className={`${thBase} bg-teal-50 text-teal-900`}>Sales (L)</th>
                                     <th className={`${thBase} bg-teal-50 text-teal-900`}>Cum. Sales (L)</th>
@@ -386,7 +380,7 @@ export default function DsrReport() {
                                     <th className={`${thBase} bg-slate-200 text-slate-700`} rowSpan={2}>Date</th>
                                     <th className={`${thBase} bg-orange-300 text-orange-900`} colSpan={7}>Diesel Dip Readings</th>
                                     <th className={`${thBase} bg-teal-300 text-teal-900`} colSpan={4}>
-                                        Diesel DSR Record <span className="font-normal text-[9px]">(S1 Opening Meter)</span>
+                                        Diesel DSR Record <span className="font-normal text-[9px]">(S2 Opening Meter)</span>
                                     </th>
                                     <th className={`${thBase} bg-teal-300 text-teal-900`}>Testing</th>
                                     <th className={`${thBase} bg-teal-200 text-teal-900`} colSpan={3}>Sales & Variation</th>
@@ -399,10 +393,10 @@ export default function DsrReport() {
                                     <th className={`${thBase} bg-orange-100 text-orange-800`}>Opening Stock (L)</th>
                                     <th className={`${thBase} bg-orange-100 text-orange-800`}>Receipt (L)</th>
                                     <th className={`${thBase} bg-orange-100 text-orange-800`}>Total Stocks (L)</th>
-                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-1<br /><span className="font-normal text-[9px]">F-Noz 1</span></th>
-                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-2<br /><span className="font-normal text-[9px]">F-Noz 2</span></th>
-                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-3<br /><span className="font-normal text-[9px]">B-Noz 1</span></th>
-                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-4<br /><span className="font-normal text-[9px]">B-Noz 2</span></th>
+                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-1<br /><span className="font-normal text-[9px]">B-Noz 1</span></th>
+                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-2<br /><span className="font-normal text-[9px]">B-Noz 2</span></th>
+                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-3<br /><span className="font-normal text-[9px]">F-Noz 1</span></th>
+                                    <th className={`${thBase} bg-teal-100 text-teal-800`}>DSR-4<br /><span className="font-normal text-[9px]">F-Noz 2</span></th>
                                     <th className={`${thBase} bg-teal-100 text-teal-800`}>Diesel (L)</th>
                                     <th className={`${thBase} bg-teal-50 text-teal-900`}>Sales (L)</th>
                                     <th className={`${thBase} bg-teal-50 text-teal-900`}>Cum. Sales (L)</th>
@@ -426,10 +420,10 @@ export default function DsrReport() {
                                         <td className={`${tdBase} bg-teal-50/40`}>{row.hasData && row.hsdD3 ? row.hsdD3.toFixed(2) : ''}</td>
                                         <td className={`${tdBase} bg-teal-50/40`}>{row.hasData && row.hsdD4 ? row.hsdD4.toFixed(2) : ''}</td>
                                         <td className={tdBase}>{row.hasData && row.hsdTesting ? row.hsdTesting.toFixed(2) : ''}</td>
-                                        <td className={`${tdBase} font-bold text-amber-700`}>
+                                        <td className={`${tdBase} font-bold text-indigo-700`}>
                                             {row.hasData ? row.hsdSaleVol.toFixed(2) : ''}
                                         </td>
-                                        <td className={`${tdBase} font-bold text-orange-800 bg-orange-50/30`}>
+                                        <td className={`${tdBase} font-bold text-indigo-700 bg-orange-50/30`}>
                                             {row.hasData ? row.cumDiesel.toFixed(2) : ''}
                                         </td>
                                         <td className={`${tdBase} font-black ${row.hasData ? (row.hsdVariation > 0 ? 'text-red-600' : 'text-emerald-600') : ''} bg-rose-50/20 text-center`}>

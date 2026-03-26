@@ -622,11 +622,20 @@ function ShiftEntryContent() {
                 <div className="bg-white p-2.5 sm:p-5 rounded-xl sm:rounded-2xl border-b-4 border-l border-r border-t border-slate-100 border-b-indigo-500 shadow-sm relative overflow-hidden group">
                     <label className="text-[9px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-1 sm:mb-2 block">{t('shift', language)}</label>
                     <select
-                        className="w-full bg-transparent border-0 p-0 text-sm sm:text-xl font-bold text-slate-800 focus:ring-0 appearance-none cursor-pointer"
+                        className="bg-transparent border-0 p-0 text-xl font-black text-slate-800 focus:ring-0 w-full appearance-none cursor-pointer outline-none"
                         value={shift}
-                        onChange={(e) => setShift(e.target.value as '1' | '2')}
+                        onChange={(e) => {
+                            const val = e.target.value as '1' | '2';
+                            setShift(val);
+                            if (!editId) {
+                                setEntries(prev => prev.map(entry => ({
+                                    ...entry,
+                                    testing: val === '1' ? 5 : 0
+                                })));
+                            }
+                        }}
                     >
-                        <option value="1">Shift 1 (AM)</option>
+                        <option value="1">Shift 1 (Day)</option>
                         <option value="2">Shift 2 (PM)</option>
                     </select>
                 </div>

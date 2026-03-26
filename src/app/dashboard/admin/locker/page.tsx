@@ -63,13 +63,17 @@ export default function VirtualLockerPage() {
         const isAddition = txType === 'owner_deposit';
         const finalAmount = isAddition ? absAmount : -absAmount;
 
+        const now = new Date();
+        const [year, month, day] = txDate.split('-');
+        const txTimestamp = new Date(Number(year), Number(month) - 1, Number(day), now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds()).toISOString();
+
         const { error } = await supabase
             .from('locker_transactions')
             .insert([{
                 type: txType,
                 amount: finalAmount,
                 description: txDesc.trim() || (txType === 'expense' ? 'Station Expense' : isAddition ? 'Owner Deposit' : 'Owner Withdrawal'),
-                created_at: new Date(txDate).toISOString()
+                created_at: txTimestamp
             }]);
 
         if (!error) {
