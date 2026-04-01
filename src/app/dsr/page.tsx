@@ -48,8 +48,8 @@ const HSD_NOZZLES = ['Front-1', 'Front-2', 'Back-1', 'Back-2'];
 
 /** Starting cumulative sales before this tracking period began (e.g. from manual records).
  *  Update these constants whenever the historical baseline changes. */
-const DSR_INIT_CUM_PETROL = 1444;   // Petrol (MS) litres sold before month tracking start
-const DSR_INIT_CUM_DIESEL = 1511;   // Diesel (HSD) litres sold before month tracking start
+const DSR_INIT_CUM_PETROL = 0;   // Petrol (MS) litres sold before month tracking start
+const DSR_INIT_CUM_DIESEL = 0;   // Diesel (HSD) litres sold before month tracking start
 
 interface DayData { date: string; shifts: any[]; }
 interface BaselineMeters { [nozzle: string]: number; }
@@ -59,6 +59,7 @@ export default function DsrReport() {
     const [month, setMonth] = useState(new Date().toISOString().substring(0, 7));
     const [loading, setLoading] = useState(false);
     const [rawData, setRawData] = useState<DayData[]>([]);
+    const [historicalCum, setHistoricalCum] = useState({ ms: DSR_INIT_CUM_PETROL, hsd: DSR_INIT_CUM_DIESEL });
 
 
     useEffect(() => {
@@ -72,6 +73,23 @@ export default function DsrReport() {
                 const endDate = `${month}-${String(daysInMonth).padStart(2, '0')}`;
 
                 const nextMonth1st = format(addDays(parseISO(endDate), 1), 'yyyy-MM-dd');
+
+                // ---- Fetch historical totals before this month ----
+                const { data: histData } = await supabase
+                    .from('shift_summaries')
+                    .select('total_ms_qty, total_hsd_qty, shifts!inner(shift_date)')
+                    .lt('shifts.shift_date', startDate);
+                
+                let histMs = DSR_INIT_CUM_PETROL;
+                let histHsd = DSR_INIT_CUM_DIESEL;
+                
+                if (histData) {
+                    histData.forEach((row: any) => {
+                        histMs += Number(row.total_ms_qty) || 0;
+                        histHsd += Number(row.total_hsd_qty) || 0;
+                    });
+                }
+                setHistoricalCum({ ms: histMs, hsd: histHsd });
 
                 // ---- Fetch current month shifts + 1st day of next month ----
                 const { data: shifts } = await supabase
@@ -172,8 +190,8 @@ export default function DsrReport() {
             };
         });
 
-        let cumPetrol = DSR_INIT_CUM_PETROL;
-        let cumDiesel = DSR_INIT_CUM_DIESEL;
+        let cumPetrol = historicalCum.ms;
+        let cumDiesel = historicalCum.hsd;
 
         // Strip the extra 1st-of-next-month day from the actual table
         return daySummaries.slice(0, -1).map((day, idx) => {

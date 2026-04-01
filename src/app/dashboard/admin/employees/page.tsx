@@ -459,7 +459,7 @@ export default function EmployeesPage() {
 
 
                                 {/* Add Transaction Form */}
-                                <div className="md:col-span-1 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm self-start sticky top-0">
+                                <div className="md:col-span-1 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm self-start md:sticky md:top-0">
                                     <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2 text-sm border-b pb-3">
                                         <IndianRupee size={16} className="text-indigo-500" />
                                         Record Payment
