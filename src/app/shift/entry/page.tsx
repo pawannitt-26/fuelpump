@@ -51,7 +51,10 @@ function ShiftEntryContent() {
     const searchParams = useSearchParams();
     const editId = searchParams.get('id');
 
-    const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+    // Helper for local time (IST)
+    const getLocalYYYYMMDD = (d = new Date()) => d.toLocaleString('en-CA', { timeZone: 'Asia/Kolkata' }).substring(0, 10);
+
+    const [date, setDate] = useState(getLocalYYYYMMDD());
     const [shift, setShift] = useState<'1' | '2'>('1');
     const [loading, setLoading] = useState(false);
 
@@ -428,6 +431,10 @@ function ShiftEntryContent() {
         setLoading(true);
 
         try {
+            const now = new Date();
+            const [year, month, day] = date.split('-');
+            const customTimestamp = new Date(Number(year), Number(month) - 1, Number(day), now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds()).toISOString();
+            
             let shiftId = editId;
 
             if (editId) {
@@ -515,7 +522,7 @@ function ShiftEntryContent() {
 
             // 3a. Record Employee Losses for any Ghatti > 0
             const empTxInserts = sides
-                .filter(s => s.ghatti > 0 && s.employeeId) // Ensure there's a loss and an employee ID
+                .filter(s => s.ghatti > 5 && s.employeeId) // Ensure loss is > ₹5 threshold and has an employee ID
                 .map(s => {
                     return {
                         employee_id: s.employeeId,
@@ -523,7 +530,8 @@ function ShiftEntryContent() {
                         amount: s.ghatti,
                         description: `Shortage (Ghatti) on ${s.machine} Side ${s.label} (${date} Shift ${shift})`,
                         shift_id: shiftId,
-                        created_at: new Date(date).toISOString()
+                        created_at: customTimestamp,
+                        is_approved: true
                     };
                 });
 
@@ -563,7 +571,8 @@ function ShiftEntryContent() {
                     amount: lockerDeposit,
                     description: `Shift Deposit (${date} Shift ${shift})`,
                     shift_id: shiftId,
-                    created_at: new Date(date).toISOString()
+                    created_at: customTimestamp,
+                    is_approved: true
                 }]);
                 if (lockerError) console.warn('Locker save failed:', lockerError);
             }
@@ -736,19 +745,6 @@ function ShiftEntryContent() {
                                             </div>
 
                                             {/* Transaction Inputs Layer */}
-                                            <div className="bg-white p-2 sm:p-4 rounded-lg sm:rounded-2xl shadow-sm border border-slate-200 focus-within:border-emerald-300 focus-within:ring-2 focus-within:ring-emerald-500/10 transition-all">
-                                                <label className="text-[9px] sm:text-[10px] font-bold text-emerald-500 uppercase tracking-widest mb-0.5 block">Cash Rx</label>
-                                                <div className="flex items-center">
-                                                    <span className="text-emerald-400 font-medium mr-1 text-xs">₹</span>
-                                                    <input
-                                                        type="number"
-                                                        placeholder="0"
-                                                        className="w-full bg-transparent border-0 p-0 text-sm sm:text-xl font-black text-slate-800 focus:ring-0 placeholder:text-slate-200"
-                                                        value={sideState?.cash || ''}
-                                                        onChange={(e) => updateSideProperty(machine, sideMarker, 'cash', parseFloat(e.target.value) || 0)}
-                                                    />
-                                                </div>
-                                            </div>
                                             <div className="bg-white p-2 sm:p-4 rounded-lg sm:rounded-2xl shadow-sm border border-slate-200 focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-500/10 transition-all">
                                                 <label className="text-[9px] sm:text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-0.5 block">UPI Rx</label>
                                                 <div className="flex items-center">
@@ -759,6 +755,19 @@ function ShiftEntryContent() {
                                                         className="w-full bg-transparent border-0 p-0 text-sm sm:text-xl font-black text-slate-800 focus:ring-0 placeholder:text-slate-200"
                                                         value={sideState?.online || ''}
                                                         onChange={(e) => updateSideProperty(machine, sideMarker, 'online', parseFloat(e.target.value) || 0)}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="bg-white p-2 sm:p-4 rounded-lg sm:rounded-2xl shadow-sm border border-slate-200 focus-within:border-emerald-300 focus-within:ring-2 focus-within:ring-emerald-500/10 transition-all">
+                                                <label className="text-[9px] sm:text-[10px] font-bold text-emerald-500 uppercase tracking-widest mb-0.5 block">Cash Rx</label>
+                                                <div className="flex items-center">
+                                                    <span className="text-emerald-400 font-medium mr-1 text-xs">₹</span>
+                                                    <input
+                                                        type="number"
+                                                        placeholder="0"
+                                                        className="w-full bg-transparent border-0 p-0 text-sm sm:text-xl font-black text-slate-800 focus:ring-0 placeholder:text-slate-200"
+                                                        value={sideState?.cash || ''}
+                                                        onChange={(e) => updateSideProperty(machine, sideMarker, 'cash', parseFloat(e.target.value) || 0)}
                                                     />
                                                 </div>
                                             </div>
@@ -782,20 +791,6 @@ function ShiftEntryContent() {
                                                         <div className="text-sm sm:text-lg font-black text-white">₹{unifiedStats?.totalValue.toFixed(0)}</div>
                                                     </div>
 
-                                                    <div className="bg-slate-700/50 p-2 rounded-lg border border-emerald-500/30">
-                                                        <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase">Total Cash</div>
-                                                        <div className="flex items-center border-b border-emerald-500/20 pb-0.5 mt-1">
-                                                            <span className="text-emerald-500 text-[10px] mr-1">₹</span>
-                                                            <input
-                                                                type="number"
-                                                                className="w-full bg-transparent border-none p-0 text-sm sm:text-lg font-black text-white focus:ring-0"
-                                                                placeholder="0"
-                                                                value={unifiedStats?.totalCash || ''}
-                                                                onChange={(e) => updateUnifiedCollection(sideState?.employeeId || '', 'cash', parseFloat(e.target.value) || 0)}
-                                                            />
-                                                        </div>
-                                                    </div>
-
                                                     <div className="bg-slate-700/50 p-2 rounded-lg border border-indigo-500/30">
                                                         <div className="text-[8px] sm:text-[9px] font-bold text-indigo-400 uppercase">Total UPI</div>
                                                         <div className="flex items-center border-b border-indigo-500/20 pb-0.5 mt-1">
@@ -806,6 +801,20 @@ function ShiftEntryContent() {
                                                                 placeholder="0"
                                                                 value={unifiedStats?.totalOnline || ''}
                                                                 onChange={(e) => updateUnifiedCollection(sideState?.employeeId || '', 'online', parseFloat(e.target.value) || 0)}
+                                                            />
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="bg-slate-700/50 p-2 rounded-lg border border-emerald-500/30">
+                                                        <div className="text-[8px] sm:text-[9px] font-bold text-emerald-400 uppercase">Total Cash</div>
+                                                        <div className="flex items-center border-b border-emerald-500/20 pb-0.5 mt-1">
+                                                            <span className="text-emerald-500 text-[10px] mr-1">₹</span>
+                                                            <input
+                                                                type="number"
+                                                                className="w-full bg-transparent border-none p-0 text-sm sm:text-lg font-black text-white focus:ring-0"
+                                                                placeholder="0"
+                                                                value={unifiedStats?.totalCash || ''}
+                                                                onChange={(e) => updateUnifiedCollection(sideState?.employeeId || '', 'cash', parseFloat(e.target.value) || 0)}
                                                             />
                                                         </div>
                                                     </div>
@@ -933,23 +942,13 @@ function ShiftEntryContent() {
                 {/* Lube Content */}
                 <div className="bg-white p-2.5 sm:p-6">
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-6">
-                        <div className="bg-gradient-to-br from-amber-50 to-amber-100/50 p-2.5 sm:p-5 rounded-xl sm:rounded-2xl border-2 border-amber-100 shadow-sm flex items-center sm:block gap-3 sm:gap-0">
+                        <div className="bg-gradient-to-br from-amber-50 to-amber-100/50 p-2.5 sm:p-5 rounded-xl sm:rounded-2xl border-2 border-amber-100 shadow-sm flex items-center sm:block gap-3 sm:gap-0 opacity-70">
                             <label className="text-[9px] sm:text-xs font-bold text-amber-600 uppercase tracking-widest sm:mb-2 block sm:w-auto w-16 shrink-0">Lube Total</label>
                             <div className="flex items-center flex-1">
                                 <span className="text-amber-500 font-medium mr-1 text-sm sm:text-xl">₹</span>
-                                <input type="number" inputMode="decimal" placeholder="0" className="w-full bg-white border border-amber-200 rounded-lg sm:rounded-xl px-2 sm:px-4 py-1.5 sm:py-3 text-sm sm:text-2xl font-black text-slate-800 focus:ring-2 focus:ring-amber-400/30 focus:outline-none placeholder:text-slate-300 transition-all"
-                                    value={lubeState.total || ''}
-                                    onChange={(e) => setLubeState({ ...lubeState, total: parseFloat(e.target.value) || 0 })}
-                                />
-                            </div>
-                        </div>
-                        <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 p-2.5 sm:p-5 rounded-xl sm:rounded-2xl border-2 border-emerald-100 shadow-sm flex items-center sm:block gap-3 sm:gap-0">
-                            <label className="text-[9px] sm:text-xs font-bold text-emerald-600 uppercase tracking-widest sm:mb-2 block sm:w-auto w-16 shrink-0">Cash Rx</label>
-                            <div className="flex items-center flex-1">
-                                <span className="text-emerald-500 font-medium mr-1 text-sm sm:text-xl">₹</span>
-                                <input type="number" inputMode="decimal" placeholder="0" className="w-full bg-white border border-emerald-200 rounded-lg sm:rounded-xl px-2 sm:px-4 py-1.5 sm:py-3 text-sm sm:text-2xl font-black text-slate-800 focus:ring-2 focus:ring-emerald-400/30 focus:outline-none placeholder:text-slate-300 transition-all"
-                                    value={lubeState.cash || ''}
-                                    onChange={(e) => setLubeState({ ...lubeState, cash: parseFloat(e.target.value) || 0 })}
+                                <input type="text" placeholder="0" className="w-full bg-transparent border-0 px-2 sm:px-4 py-1.5 sm:py-3 text-sm sm:text-2xl font-black text-amber-800 focus:outline-none cursor-not-allowed"
+                                    value={(lubeState.cash + lubeState.online) || ''}
+                                    disabled
                                 />
                             </div>
                         </div>
@@ -959,7 +958,23 @@ function ShiftEntryContent() {
                                 <span className="text-indigo-500 font-medium mr-1 text-sm sm:text-xl">₹</span>
                                 <input type="number" inputMode="decimal" placeholder="0" className="w-full bg-white border border-indigo-200 rounded-lg sm:rounded-xl px-2 sm:px-4 py-1.5 sm:py-3 text-sm sm:text-2xl font-black text-slate-800 focus:ring-2 focus:ring-indigo-400/30 focus:outline-none placeholder:text-slate-300 transition-all"
                                     value={lubeState.online || ''}
-                                    onChange={(e) => setLubeState({ ...lubeState, online: parseFloat(e.target.value) || 0 })}
+                                    onChange={(e) => {
+                                        const online = parseFloat(e.target.value) || 0;
+                                        setLubeState({ ...lubeState, online, total: lubeState.cash + online });
+                                    }}
+                                />
+                            </div>
+                        </div>
+                        <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 p-2.5 sm:p-5 rounded-xl sm:rounded-2xl border-2 border-emerald-100 shadow-sm flex items-center sm:block gap-3 sm:gap-0">
+                            <label className="text-[9px] sm:text-xs font-bold text-emerald-600 uppercase tracking-widest sm:mb-2 block sm:w-auto w-16 shrink-0">Cash Rx</label>
+                            <div className="flex items-center flex-1">
+                                <span className="text-emerald-500 font-medium mr-1 text-sm sm:text-xl">₹</span>
+                              <input type="number" inputMode="decimal" placeholder="0" className="w-full bg-white border border-emerald-200 rounded-lg sm:rounded-xl px-2 sm:px-4 py-1.5 sm:py-3 text-sm sm:text-2xl font-black text-slate-800 focus:ring-2 focus:ring-emerald-400/30 focus:outline-none placeholder:text-slate-300 transition-all"
+                                    value={lubeState.cash || ''}
+                                    onChange={(e) => {
+                                        const cash = parseFloat(e.target.value) || 0;
+                                        setLubeState({ ...lubeState, cash, total: cash + lubeState.online });
+                                    }}
                                 />
                             </div>
                         </div>
@@ -978,22 +993,6 @@ function ShiftEntryContent() {
                             value={lubeState.description}
                             onChange={(e) => setLubeState({ ...lubeState, description: e.target.value })}
                         />
-                    </div>
-
-                    <div className="mt-4 sm:mt-6 bg-slate-50/50 p-3 sm:p-5 rounded-xl sm:rounded-2xl border border-slate-200">
-                        <div className="flex flex-row justify-between items-center gap-3">
-                            <div>
-                                <div className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest mb-0.5">Collection</div>
-                                <div className="text-lg sm:text-2xl font-black text-slate-700">₹{(lubeState.cash + lubeState.online).toFixed(0)}</div>
-                            </div>
-                            <div className={`px-3 sm:px-6 py-2 sm:py-3 rounded-lg sm:rounded-xl flex items-center gap-2 sm:gap-3 font-bold border shadow-sm ${Math.abs((lubeState.cash + lubeState.online) - lubeState.total) > 5 ? 'bg-red-50 text-red-600 border-red-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
-                                <span className="text-[9px] sm:text-xs uppercase tracking-wider opacity-80">Var</span>
-                                <span className="text-base sm:text-xl font-black">
-                                    {((lubeState.cash + lubeState.online) - lubeState.total) > 0 ? '+' : ''}
-                                    ₹{((lubeState.cash + lubeState.online) - lubeState.total).toFixed(0)}
-                                </span>
-                            </div>
-                        </div>
                     </div>
                 </div>
             </div>

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAppStore } from '@/store/appStore';
 import { supabase } from '@/lib/supabase';
-import { Users, Plus, UserPlus, Power, AlertCircle, History, X, IndianRupee } from 'lucide-react';
+import { Users, Plus, UserPlus, Power, AlertCircle, History, X, IndianRupee, Pencil, Trash2, CheckCircle } from 'lucide-react';
 
 interface Employee {
     id: string;
@@ -19,6 +19,7 @@ interface EmpTransaction {
     amount: number;
     description: string;
     created_at: string;
+    is_approved: boolean;
 }
 
 export default function EmployeesPage() {
@@ -39,9 +40,31 @@ export default function EmployeesPage() {
     const [txDesc, setTxDesc] = useState('');
     const [txDate, setTxDate] = useState(new Date().toISOString().substring(0, 10));
 
+    // Month Selector State
+    const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7)); // YYYY-MM
+
+    // Edit Ledger Transaction State
+    const [editingLedgerTx, setEditingLedgerTx] = useState<EmpTransaction | null>(null);
+    const [editAmount, setEditAmount] = useState('');
+    const [editDesc, setEditDesc] = useState('');
+    const [editDate, setEditDate] = useState('');
+
     useEffect(() => {
         fetchEmployees();
-    }, []);
+        
+        // If the ledger modal is open, refresh its data for the new month
+        if (selectedEmp) {
+            openLedger(selectedEmp);
+        }
+    }, [selectedMonth]);
+
+    const getMonthRange = (monthStr: string) => {
+        const start = `${monthStr}-01`;
+        const [y, m] = monthStr.split('-');
+        const date = new Date(Number(y), Number(m), 1); // JS Date uses 0-indexed months, so passing 'm' gives us the NEXT month automatically
+        const end = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-01`;
+        return { start, end };
+    };
 
     const fetchEmployees = async () => {
         setLoading(true);
@@ -57,15 +80,20 @@ export default function EmployeesPage() {
             return;
         }
 
-        // Fetch balances (sum of transactions)
+        // Fetch balances (sum of transactions) scoped to selected month
+        const { start, end } = getMonthRange(selectedMonth);
         const { data: txs, error: txErr } = await supabase
             .from('employee_transactions')
-            .select('employee_id, amount');
+            .select('employee_id, amount, is_approved')
+            .gte('created_at', start)
+            .lt('created_at', end);
 
         const balances: Record<string, number> = {};
         if (!txErr && txs) {
             txs.forEach((tx) => {
-                balances[tx.employee_id] = (balances[tx.employee_id] || 0) + Number(tx.amount);
+                if (tx.is_approved) {
+                    balances[tx.employee_id] = (balances[tx.employee_id] || 0) + Number(tx.amount);
+                }
             });
         }
 
@@ -111,10 +139,13 @@ export default function EmployeesPage() {
         setSelectedEmp(emp);
         setLoadingLedger(true);
 
+        const { start, end } = getMonthRange(selectedMonth);
         const { data, error } = await supabase
             .from('employee_transactions')
             .select('*')
             .eq('employee_id', emp.id)
+            .gte('created_at', start)
+            .lt('created_at', end)
             .order('created_at', { ascending: false });
 
         if (!error && data) {
@@ -143,7 +174,8 @@ export default function EmployeesPage() {
                 type: txType,
                 amount: empLedgerAmount,
                 description: desc,
-                created_at: new Date(txDate).toISOString()
+                created_at: new Date(txDate).toISOString(),
+                is_approved: user?.role === 'Admin'
             }]);
 
         if (!txError) {
@@ -152,13 +184,83 @@ export default function EmployeesPage() {
                 type: txType === 'advance' ? 'employee_advance' : 'owner_deposit',
                 amount: lockerAmount,
                 description: `${txType === 'advance' ? 'Advance to' : 'Settlement from'} ${selectedEmp.name}`,
-                created_at: new Date(txDate).toISOString()
+                created_at: new Date(txDate).toISOString(),
+                is_approved: user?.role === 'Admin'
             }]);
 
             setTxAmount('');
             setTxDesc('');
             openLedger(selectedEmp);
             fetchEmployees();
+        }
+        setIsSubmitting(false);
+    };
+
+    const openEditLedgerModal = (tx: EmpTransaction) => {
+        setEditingLedgerTx(tx);
+        setEditAmount(Math.abs(tx.amount).toString());
+        setEditDesc(tx.description);
+        
+        const dateObj = new Date(tx.created_at);
+        const yyyy = dateObj.getFullYear();
+        const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+        const dd = String(dateObj.getDate()).padStart(2, '0');
+        setEditDate(`${yyyy}-${mm}-${dd}`);
+    };
+
+    const handleUpdateLedgerTx = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!editingLedgerTx || !editAmount || isNaN(Number(editAmount))) return;
+        setIsSubmitting(true);
+
+        const absAmount = Math.abs(Number(editAmount));
+        const isAddition = editingLedgerTx.type === 'loss' || editingLedgerTx.type === 'advance';
+        const finalAmount = isAddition ? absAmount : -absAmount;
+
+        const dateObj = new Date(editingLedgerTx.created_at);
+        const [year, month, day] = editDate.split('-');
+        dateObj.setFullYear(Number(year), Number(month) - 1, Number(day));
+
+        const { error } = await supabase
+            .from('employee_transactions')
+            .update({
+                amount: finalAmount,
+                description: editDesc.trim(),
+                created_at: dateObj.toISOString()
+            })
+            .eq('id', editingLedgerTx.id);
+
+        if (!error && selectedEmp) {
+            setEditingLedgerTx(null);
+            openLedger(selectedEmp);
+            fetchEmployees();
+        } else if (error) {
+            alert('Failed to update: ' + error.message);
+        }
+        setIsSubmitting(false);
+    };
+
+    const handleDeleteLedgerTx = async (id: string) => {
+        if (!confirm('Are you sure you want to permanently delete this ledger transaction?')) return;
+        setIsSubmitting(true);
+        const { error } = await supabase.from('employee_transactions').delete().eq('id', id);
+        if (!error && selectedEmp) {
+            openLedger(selectedEmp);
+            fetchEmployees();
+        } else if (error) {
+            alert('Delete failed: ' + error.message);
+        }
+        setIsSubmitting(false);
+    };
+
+    const handleApproveLedgerTx = async (id: string, emp: Employee) => {
+        setIsSubmitting(true);
+        const { error } = await supabase.from('employee_transactions').update({ is_approved: true }).eq('id', id);
+        if (!error) {
+            openLedger(emp);
+            fetchEmployees();
+        } else {
+            alert('Approval failed: ' + error.message);
         }
         setIsSubmitting(false);
     };
@@ -175,6 +277,16 @@ export default function EmployeesPage() {
                     <span className="bg-indigo-600 text-white p-1.5 sm:p-2 rounded-lg sm:rounded-xl shadow-md"><Users size={20} /></span>
                     Employee Management
                 </h1>
+                
+                <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 p-1.5 pr-3 rounded-lg shadow-sm">
+                    <History size={16} className="text-slate-500 ml-2" />
+                    <input 
+                        type="month" 
+                        value={selectedMonth}
+                        onChange={(e) => setSelectedMonth(e.target.value)}
+                        className="bg-transparent border-0 text-sm font-bold text-slate-700 outline-none focus:ring-0 cursor-pointer p-1"
+                    />
+                </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -394,28 +506,47 @@ export default function EmployeesPage() {
                                                     <th className="p-3 font-semibold text-slate-500">Date/Time</th>
                                                     <th className="p-3 font-semibold text-slate-500">Description</th>
                                                     <th className="p-3 font-semibold text-slate-500 text-right">Amount</th>
+                                                    {user?.role === 'Admin' && <th className="p-3 font-semibold text-slate-500 text-right">Actions</th>}
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-slate-100">
                                                 {loadingLedger ? (
-                                                    <tr><td colSpan={3} className="p-8 text-center text-slate-400">Loading ledger...</td></tr>
+                                                    <tr><td colSpan={user?.role === 'Admin' ? 4 : 3} className="p-8 text-center text-slate-400">Loading ledger...</td></tr>
                                                 ) : transactions.length === 0 ? (
-                                                    <tr><td colSpan={3} className="p-8 text-center text-slate-400">No transaction history found for this employee.</td></tr>
+                                                    <tr><td colSpan={user?.role === 'Admin' ? 4 : 3} className="p-8 text-center text-slate-400">No transaction history found for this employee.</td></tr>
                                                 ) : (
                                                     transactions.map(tx => (
-                                                        <tr key={tx.id} className="hover:bg-slate-50/50">
+                                                        <tr key={tx.id} className={`hover:bg-slate-50/50 group transition-colors ${!tx.is_approved ? 'bg-amber-50/30' : ''}`}>
                                                             <td className="p-3 text-slate-500 font-mono text-xs">{new Date(tx.created_at).toLocaleString()}</td>
                                                             <td className="p-3">
+                                                                {!tx.is_approved && <span className="mr-1.5 inline-flex items-center text-[9px] bg-amber-500 text-white px-1.5 py-0.5 rounded tracking-widest uppercase mb-1">Pending</span>}
                                                                 <span className="font-medium text-slate-700">{tx.description}</span>
                                                                 {tx.type === 'loss' && <span className="ml-2 inline-block px-1.5 py-0.5 bg-red-100 text-red-600 rounded text-[10px] font-bold tracking-wider uppercase">Loss</span>}
                                                                 {tx.type === 'advance' && <span className="ml-2 inline-block px-1.5 py-0.5 bg-indigo-100 text-indigo-600 rounded text-[10px] font-bold tracking-wider uppercase">Advance</span>}
                                                                 {tx.type === 'settlement' && <span className="ml-2 inline-block px-1.5 py-0.5 bg-emerald-100 text-emerald-600 rounded text-[10px] font-bold tracking-wider uppercase">Settlement</span>}
                                                             </td>
-                                                            <td className="p-3 text-right font-mono font-bold">
+                                                            <td className={`p-3 text-right font-mono font-bold ${!tx.is_approved ? 'opacity-50' : ''}`}>
                                                                 <span className={tx.amount > 0 ? 'text-red-500' : 'text-emerald-600'}>
                                                                     {tx.amount > 0 ? '+' : ''}{tx.amount.toFixed(2)}
                                                                 </span>
                                                             </td>
+                                                            {user?.role === 'Admin' && (
+                                                                <td className="p-3 text-right">
+                                                                    <div className="flex justify-end gap-1.5">
+                                                                        {!tx.is_approved && (
+                                                                            <button onClick={() => selectedEmp && handleApproveLedgerTx(tx.id, selectedEmp)} disabled={isSubmitting} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded transition-colors border border-emerald-200 bg-white" title="Approve">
+                                                                                <CheckCircle size={14} />
+                                                                            </button>
+                                                                        )}
+                                                                        <button onClick={() => openEditLedgerModal(tx)} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded transition-colors" title="Edit">
+                                                                            <Pencil size={14} />
+                                                                        </button>
+                                                                        <button onClick={() => handleDeleteLedgerTx(tx.id)} disabled={isSubmitting} className="p-1.5 text-red-500 hover:bg-red-50 rounded transition-colors" title="Delete">
+                                                                            <Trash2 size={14} />
+                                                                        </button>
+                                                                    </div>
+                                                                </td>
+                                                            )}
                                                         </tr>
                                                     ))
                                                 )}
@@ -425,6 +556,45 @@ export default function EmployeesPage() {
                                 </div>
                             </div>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit Ledger Transaction Modal */}
+            {editingLedgerTx && (
+                <div className="fixed inset-0 bg-slate-900/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+                        <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                            <h3 className="text-lg font-black text-slate-800 flex items-center gap-2">
+                                <Pencil className="text-blue-500" size={18} /> Edit Ledger Entry
+                            </h3>
+                            <button onClick={() => setEditingLedgerTx(null)} className="p-2 bg-white rounded-full text-slate-400 hover:bg-slate-200 transition-colors shadow-sm">
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <form onSubmit={handleUpdateLedgerTx} className="p-6 space-y-4">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Category</label>
+                                <input type="text" className="input-field w-full rounded-xl p-3 text-sm font-bold bg-slate-100 border-slate-200 text-slate-500 uppercase cursor-not-allowed" value={editingLedgerTx.type} disabled />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Date</label>
+                                <input type="date" required className="input-field w-full rounded-xl p-3 text-base font-bold bg-slate-50 border-slate-200 focus:bg-white" value={editDate} onChange={(e) => setEditDate(e.target.value)} disabled={isSubmitting} />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Amount (₹) (Abs Value)</label>
+                                <input type="number" min="0" step="0.01" required className="input-field w-full rounded-xl p-3 text-base font-mono font-bold bg-slate-50 border-slate-200 focus:bg-white" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} disabled={isSubmitting} />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Description</label>
+                                <input type="text" className="input-field w-full rounded-xl p-3 text-base bg-slate-50 border-slate-200 focus:bg-white" value={editDesc} onChange={(e) => setEditDesc(e.target.value)} disabled={isSubmitting} />
+                            </div>
+                            <div className="pt-2">
+                                <button type="submit" disabled={isSubmitting} className="btn w-full bg-blue-600 hover:bg-blue-700 text-white rounded-xl py-3 font-bold disabled:opacity-50 text-base shadow-lg shadow-blue-600/20">
+                                    Save Changes
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}
