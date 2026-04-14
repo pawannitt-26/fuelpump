@@ -2,6 +2,7 @@
 
 import { useAppStore } from '@/store/appStore';
 import { Menu, UserCircle } from 'lucide-react';
+import NotificationCenter from './NotificationCenter';
 
 export default function Header() {
     const { language, setLanguage, setSidebarOpen, user } = useAppStore();
@@ -47,6 +48,8 @@ export default function Header() {
                         HI
                     </button>
                 </div>
+
+                <NotificationCenter />
 
                 {/* User Profile */}
                 <div className="flex items-center gap-1.5 sm:gap-2 text-sm font-medium text-slate-700">

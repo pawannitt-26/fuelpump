@@ -577,6 +577,23 @@ function ShiftEntryContent() {
                 if (lockerError) console.warn('Locker save failed:', lockerError);
             }
 
+            // Trigger Push Notification to Admins
+            try {
+                await fetch('/api/push/notify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: editId ? 'Shift Updated' : 'New Shift Submitted',
+                        message: `Manager ${user.name} has ${editId ? 'updated' : 'submitted'} Shift ${shift} on ${date}.`,
+                        type: 'SHIFT_SUBMISSION',
+                        link: `/shift/review/${shiftId}`,
+                        triggeringUserId: user.id
+                    })
+                });
+            } catch (notifyErr) {
+                console.error('Failed to send notification trigger:', notifyErr);
+            }
+
             alert('Shift submitted successfully!');
             router.push('/dashboard/manager');
         } catch (err: any) {
@@ -1168,7 +1185,7 @@ function ShiftEntryContent() {
                         className="bg-blue-600 hover:bg-blue-500 text-white pl-6 pr-8 py-4 rounded-xl sm:rounded-2xl font-black text-lg sm:text-xl shadow-xl shadow-blue-600/20 hover:shadow-blue-500/40 hover:-translate-y-1 flex items-center gap-3 sm:gap-4 transition-all duration-300 disabled:opacity-50 disabled:hover:translate-y-0 disabled:cursor-not-allowed focus:ring-4 focus:ring-blue-500/30 outline-none"
                     >
                         {loading ? <Loader2 size={22} className="animate-spin" /> : <Save size={22} />}
-                        {loading ? 'Submitting...' : 'Submit Shift Entry'}
+                        {loading ? (editId ? 'Updating...' : 'Submitting...') : (editId ? 'Update Shift Entry' : 'Submit Shift Entry')}
                     </button>
                 </div>
             </div>
@@ -1181,7 +1198,7 @@ function ShiftEntryContent() {
                     className="w-full bg-blue-600 hover:bg-blue-500 text-white py-3.5 rounded-xl font-bold text-base shadow-lg shadow-blue-600/20 flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
                 >
                     {loading ? <Loader2 size={20} className="animate-spin" /> : <Save size={20} />}
-                    {loading ? 'Submitting...' : 'Submit Shift'}
+                    {loading ? (editId ? 'Updating...' : 'Submitting...') : (editId ? 'Update Shift' : 'Submit Shift')}
                 </button>
             </div>
         </div>
