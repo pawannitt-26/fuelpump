@@ -6,41 +6,9 @@ import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { generatePDF } from '@/lib/pdf';
 import { format, getDaysInMonth, parseISO, subMonths, addDays } from 'date-fns';
+import { dipToLiters } from '@/lib/fuelUtils';
 
-// ---- Dip-to-Volume Lookup Table (cm -> Liters) via linear interpolation ----
-const DIP_TABLE: Record<number, number> = {
-    1: 12, 2: 34, 3: 62, 4: 96, 5: 134, 6: 175, 7: 221, 8: 269, 9: 321, 10: 375,
-    11: 432, 12: 491, 13: 553, 14: 617, 15: 684, 16: 752, 17: 822, 18: 895, 19: 969, 20: 1045,
-    21: 1122, 22: 1201, 23: 1282, 24: 1365, 25: 1449, 26: 1534, 27: 1621, 28: 1709, 29: 1799, 30: 1890,
-    31: 1982, 32: 2075, 33: 2170, 34: 2265, 35: 2362, 36: 2460, 37: 2560, 38: 2660, 39: 2761, 40: 2863,
-    41: 2966, 42: 3071, 43: 3176, 44: 3282, 45: 3389, 46: 3496, 47: 3605, 48: 3714, 49: 3825, 50: 3936,
-    51: 4048, 52: 4160, 53: 4274, 54: 4388, 55: 4503, 56: 4618, 57: 4734, 58: 4851, 59: 4968, 60: 5086,
-    61: 5205, 62: 5324, 63: 5444, 64: 5564, 65: 5685, 66: 5807, 67: 5928, 68: 6051, 69: 6174, 70: 6297,
-    71: 6421, 72: 6545, 73: 6670, 74: 6795, 75: 6921, 76: 7047, 77: 7173, 78: 7300, 79: 7427, 80: 7554,
-    81: 7682, 82: 7810, 83: 7938, 84: 8067, 85: 8196, 86: 8325, 87: 8454, 88: 8584, 89: 8714, 90: 8819,
-    91: 8974, 92: 9105, 93: 9236, 94: 9367, 95: 9498, 96: 9629, 97: 9760, 98: 9892, 99: 10024, 100: 10156,
-    101: 10287, 102: 10419, 103: 10552, 104: 10684, 105: 10732, 106: 10864, 107: 10996, 108: 11128, 109: 11260, 110: 11392,
-    111: 11523, 112: 11655, 113: 11786, 114: 11917, 115: 12048, 116: 12179, 117: 12310, 118: 12441, 119: 12571, 120: 12701,
-    121: 12831, 122: 12961, 123: 13090, 124: 13219, 125: 13348, 126: 13476, 127: 13605, 128: 13733, 129: 13860, 130: 13988,
-    131: 14115, 132: 14241, 133: 14367, 134: 14493, 135: 14619, 136: 14744, 137: 14868, 138: 14993, 139: 15116, 140: 15240,
-    141: 15363, 142: 15485, 143: 15607, 144: 15728, 145: 15849, 146: 15969, 147: 16089, 148: 16208, 149: 16326, 150: 16444,
-    151: 16561, 152: 16678, 153: 16794, 154: 16909, 155: 17024, 156: 17138, 157: 17251, 158: 17364, 159: 17475, 160: 17586,
-    161: 17696, 162: 17806, 163: 17914, 164: 18022, 165: 18129, 166: 18234, 167: 18339, 168: 18443, 169: 18546, 170: 18648,
-    171: 18749, 172: 18849, 173: 18948, 174: 19046, 175: 19143, 176: 19238, 177: 19333, 178: 19426, 179: 19518, 180: 19608,
-    181: 19697, 182: 19785, 183: 19872, 184: 19957, 185: 20041, 186: 20123, 187: 20203, 188: 20282, 189: 20360, 190: 20435,
-    191: 20509, 192: 20581, 193: 20651, 194: 20719, 195: 20785, 196: 20848, 197: 20910, 198: 20969, 199: 21025, 200: 21079,
-    201: 21130, 202: 21178, 203: 21222, 204: 21263, 205: 21300, 206: 21333, 207: 21360, 208: 21380
-};
 
-function dipToLiters(cm: number): number {
-    if (!cm || cm <= 0) return 0;
-    const low = Math.floor(cm);
-    const high = Math.ceil(cm);
-    const lowVal = DIP_TABLE[low];
-    const highVal = DIP_TABLE[high];
-    if (lowVal === undefined || highVal === undefined) return 0;
-    return Math.round(lowVal + (cm - low) * (highVal - lowVal));
-}
 
 // Nozzle sets
 const MS_NOZZLES = ['Front-3', 'Front-4', 'Back-3', 'Back-4'];
@@ -74,29 +42,15 @@ export default function DsrReport() {
 
                 const nextMonth1st = format(addDays(parseISO(endDate), 1), 'yyyy-MM-dd');
 
-                // ---- Fetch historical totals before this month ----
-                const { data: histData } = await supabase
-                    .from('shift_summaries')
-                    .select('total_ms_qty, total_hsd_qty, shifts!inner(shift_date)')
-                    .lt('shifts.shift_date', startDate);
-                
-                let histMs = DSR_INIT_CUM_PETROL;
-                let histHsd = DSR_INIT_CUM_DIESEL;
-                
-                if (histData) {
-                    histData.forEach((row: any) => {
-                        histMs += Number(row.total_ms_qty) || 0;
-                        histHsd += Number(row.total_hsd_qty) || 0;
-                    });
-                }
-                setHistoricalCum({ ms: histMs, hsd: histHsd });
+                // ---- Cumulative overrides (reset per month) ----
+                setHistoricalCum({ ms: 0, hsd: 0 });
 
                 // ---- Fetch current month shifts + 1st day of next month ----
                 const { data: shifts } = await supabase
                     .from('shifts')
                     .select(`
             id, shift_date, shift_number, ms_receipt, hsd_receipt,
-            shift_entries ( nozzle_no, opening_meter, testing_qty ),
+            shift_entries ( nozzle_no, opening_meter, closing_meter, testing_qty ),
             shift_tanks ( tank_name, manual_dip )
           `)
                     .gte('shift_date', startDate)
@@ -133,12 +87,12 @@ export default function DsrReport() {
     const processedRows = useMemo(() => {
         const getMetersForShifts = (shifts: any[]) => {
             const getOpen = (no: string) => {
-                const s2 = shifts.find((s: any) => s.shift_number === 2);
-                const s2Rec = s2?.shift_entries?.find((e: any) => e.nozzle_no === no);
-                if (s2Rec) return parseFloat(s2Rec.opening_meter) || 0;
                 const s1 = shifts.find((s: any) => s.shift_number === 1);
                 const s1Rec = s1?.shift_entries?.find((e: any) => e.nozzle_no === no);
                 if (s1Rec) return parseFloat(s1Rec.opening_meter) || 0;
+                const s2 = shifts.find((s: any) => s.shift_number === 2);
+                const s2Rec = s2?.shift_entries?.find((e: any) => e.nozzle_no === no);
+                if (s2Rec) return parseFloat(s2Rec.opening_meter) || 0;
                 const targetEntries = shifts.flatMap((s: any) => s.shift_entries || []).filter((e: any) => e.nozzle_no === no);
                 if (targetEntries.length === 0) return 0;
                 const minVal = Math.min(...targetEntries.map((e: any) => parseFloat(e.opening_meter) || 0));
@@ -149,9 +103,28 @@ export default function DsrReport() {
             return meters;
         };
 
+        const getClosingMetersForShifts = (shifts: any[]) => {
+            const getClose = (no: string) => {
+                // Prefer Shift 2's closing meter, fallback to Shift 1
+                const s2 = shifts.find((s: any) => s.shift_number === 2);
+                const s2Rec = s2?.shift_entries?.find((e: any) => e.nozzle_no === no);
+                if (s2Rec && s2Rec.closing_meter) return parseFloat(s2Rec.closing_meter) || 0;
+
+                const s1 = shifts.find((s: any) => s.shift_number === 1);
+                const s1Rec = s1?.shift_entries?.find((e: any) => e.nozzle_no === no);
+                if (s1Rec && s1Rec.closing_meter) return parseFloat(s1Rec.closing_meter) || 0;
+
+                return 0;
+            };
+            const meters: Record<string, number> = {};
+            [...MS_NOZZLES, ...HSD_NOZZLES].forEach(no => meters[no] = getClose(no));
+            return meters;
+        };
+
         const daySummaries = rawData.map(day => {
             const allShifts = day.shifts;
             const meters = getMetersForShifts(allShifts);
+            const closingMeters = getClosingMetersForShifts(allShifts);
 
             const allEntries = allShifts.flatMap((s: any) => s.shift_entries || []);
             const getTestSum = (nozzles: string[]) =>
@@ -165,7 +138,9 @@ export default function DsrReport() {
             const getValidDip = (tankName: string) => {
                 const matches = tanks.filter((t: any) => t.tank_name === tankName);
                 if (matches.length === 0) return 0;
-                const validMatch = matches.slice().reverse().find((t: any) => {
+
+                // Find the first valid dip in chronological order (i.e. Shift 1 first)
+                const validMatch = matches.find((t: any) => {
                     const val = parseFloat(t.manual_dip);
                     return !isNaN(val) && val > 0;
                 });
@@ -180,6 +155,7 @@ export default function DsrReport() {
                 shifts: allShifts,
                 hasData: allShifts.length > 0,
                 meters,
+                closingMeters,
                 msTesting,
                 hsdTesting,
                 dipMS: getValidDip('3-MS'),
@@ -208,15 +184,12 @@ export default function DsrReport() {
                 };
             }
 
-            // To calculate sales, find the next valid day's meters
-            const nextValidDay = daySummaries.slice(idx + 1).find(d => d.hasData);
-
             let msSaleVol = 0;
             let hsdSaleVol = 0;
 
-            if (nextValidDay) {
-                msSaleVol = MS_NOZZLES.reduce((sum, no) => sum + (nextValidDay.meters[no] - day.meters[no]), 0) - day.msTesting;
-                hsdSaleVol = HSD_NOZZLES.reduce((sum, no) => sum + (nextValidDay.meters[no] - day.meters[no]), 0) - day.hsdTesting;
+            if (day.hasData) {
+                msSaleVol = MS_NOZZLES.reduce((sum, no) => sum + (day.closingMeters[no] - day.meters[no]), 0) - day.msTesting;
+                hsdSaleVol = HSD_NOZZLES.reduce((sum, no) => sum + (day.closingMeters[no] - day.meters[no]), 0) - day.hsdTesting;
             }
 
             // Prevent negative sales if something was entered wrong
@@ -252,27 +225,7 @@ export default function DsrReport() {
         });
     }, [rawData]);
 
-    // ---- Compute Variations (Total - Sale - NextDayOpen) ----
-    const finalRows = useMemo(() => {
-        return processedRows.map((row, idx) => {
-            if (!row.hasData) return { ...row, msVariation: 0, hsdVariation: 0 };
-
-            const nextDay = processedRows[idx + 1];
-            // If we have a next day with data, variation = (Total - Sale) - NextDayOpen
-            // If it's the last day or next day has no data, variation is 0 for now
-            const msVariation = nextDay?.hasData
-                ? (row.msTotalStock - row.msSaleVol) - nextDay.msOpenStock
-                : 0;
-
-            const hsdVariation = nextDay?.hasData
-                ? (row.hsdTotalStock - row.hsdSaleVol) - nextDay.hsdOpenStock
-                : 0;
-
-            return { ...row, msVariation, hsdVariation };
-        });
-    }, [processedRows]);
-
-    const hasData = finalRows.some(d => d.hasData);
+    const hasData = processedRows.some(d => d.hasData);
     const monthLabel = format(parseISO(`${month}-01`), 'MMMM yyyy').toUpperCase();
 
     const thBase = "py-2 px-2 text-center font-bold text-[10px] border border-slate-300 whitespace-nowrap";
@@ -332,10 +285,10 @@ export default function DsrReport() {
                                     </th>
                                     <th className={`${thBase} bg-orange-300 text-orange-900`} colSpan={4}>Petrol DIP Readings</th>
                                     <th className={`${thBase} bg-teal-300 text-teal-900`} colSpan={4}>
-                                        Petrol DSR Record <span className="font-normal text-[9px]">(S2 Opening Meter)</span>
+                                        Petrol DSR Record <span className="font-normal text-[9px]">(S1 Opening Meter)</span>
                                     </th>
                                     <th className={`${thBase} bg-teal-300 text-teal-900`}>Testing</th>
-                                    <th className={`${thBase} bg-teal-200 text-teal-900`} colSpan={3}>Sales & Variation</th>
+                                    <th className={`${thBase} bg-teal-200 text-teal-900`} colSpan={2}>Sales</th>
                                 </tr>
                                 <tr>
                                     <th className={`${thBase} bg-orange-100 text-orange-800`}>DIP-MS (cm)</th>
@@ -349,11 +302,10 @@ export default function DsrReport() {
                                     <th className={`${thBase} bg-teal-100 text-teal-800`}>Petrol (L)</th>
                                     <th className={`${thBase} bg-teal-50 text-teal-900`}>Sales (L)</th>
                                     <th className={`${thBase} bg-teal-50 text-teal-900`}>Cum. Sales (L)</th>
-                                    <th className={`${thBase} bg-rose-100 text-rose-900`}>Variation (L)</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {finalRows.map((row, idx) => (
+                                {processedRows.map((row, idx) => (
                                     <tr key={row.date}
                                         className={`${row.hasData ? '' : 'text-slate-300'} ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'} hover:bg-orange-50/20 transition-colors`}>
                                         <td className={`${tdLabel} text-center bg-slate-100`}>{format(parseISO(row.date), 'd/M/yy')}</td>
@@ -372,16 +324,6 @@ export default function DsrReport() {
                                         <td className={`${tdBase} font-bold text-blue-800 bg-blue-50/30`}>
                                             {row.hasData ? row.cumPetrol.toFixed(2) : ''}
                                         </td>
-                                        <td className={`${tdBase} font-black ${row.hasData ? (row.msVariation > 0 ? 'text-red-600' : 'text-emerald-600') : ''} bg-rose-50/20 text-center`}>
-                                            {row.hasData && idx < finalRows.length - 1 && finalRows[idx + 1].hasData ? (
-                                                <div className="flex flex-col leading-none py-1">
-                                                    <span className="text-xs">{Math.abs(row.msVariation).toFixed(2)}</span>
-                                                    <span className="text-[7.5px] uppercase font-black mt-0.5">
-                                                        {row.msVariation > 0 ? 'Loss' : 'Gain'}
-                                                    </span>
-                                                </div>
-                                            ) : '-'}
-                                        </td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -398,10 +340,10 @@ export default function DsrReport() {
                                     <th className={`${thBase} bg-slate-200 text-slate-700`} rowSpan={2}>Date</th>
                                     <th className={`${thBase} bg-orange-300 text-orange-900`} colSpan={7}>Diesel Dip Readings</th>
                                     <th className={`${thBase} bg-teal-300 text-teal-900`} colSpan={4}>
-                                        Diesel DSR Record <span className="font-normal text-[9px]">(S2 Opening Meter)</span>
+                                        Diesel DSR Record <span className="font-normal text-[9px]">(S1 Opening Meter)</span>
                                     </th>
                                     <th className={`${thBase} bg-teal-300 text-teal-900`}>Testing</th>
-                                    <th className={`${thBase} bg-teal-200 text-teal-900`} colSpan={3}>Sales & Variation</th>
+                                    <th className={`${thBase} bg-teal-200 text-teal-900`} colSpan={2}>Sales</th>
                                 </tr>
                                 <tr>
                                     <th className={`${thBase} bg-orange-100 text-orange-800`}>HSD-1 (cm)</th>
@@ -418,11 +360,10 @@ export default function DsrReport() {
                                     <th className={`${thBase} bg-teal-100 text-teal-800`}>Diesel (L)</th>
                                     <th className={`${thBase} bg-teal-50 text-teal-900`}>Sales (L)</th>
                                     <th className={`${thBase} bg-teal-50 text-teal-900`}>Cum. Sales (L)</th>
-                                    <th className={`${thBase} bg-rose-100 text-rose-900`}>Variation (L)</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {finalRows.map((row, idx) => (
+                                {processedRows.map((row, idx) => (
                                     <tr key={row.date}
                                         className={`${row.hasData ? '' : 'text-slate-300'} ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'} hover:bg-amber-50/20 transition-colors`}>
                                         <td className={`${tdLabel} text-center bg-slate-100`}>{format(parseISO(row.date), 'd/M/yy')}</td>
@@ -443,16 +384,6 @@ export default function DsrReport() {
                                         </td>
                                         <td className={`${tdBase} font-bold text-indigo-700 bg-orange-50/30`}>
                                             {row.hasData ? row.cumDiesel.toFixed(2) : ''}
-                                        </td>
-                                        <td className={`${tdBase} font-black ${row.hasData ? (row.hsdVariation > 0 ? 'text-red-600' : 'text-emerald-600') : ''} bg-rose-50/20 text-center`}>
-                                            {row.hasData && idx < finalRows.length - 1 && finalRows[idx + 1].hasData ? (
-                                                <div className="flex flex-col leading-none py-1">
-                                                    <span className="text-xs">{Math.abs(row.hsdVariation).toFixed(2)}</span>
-                                                    <span className="text-[7.5px] uppercase font-black mt-0.5">
-                                                        {row.hsdVariation > 0 ? 'Loss' : 'Gain'}
-                                                    </span>
-                                                </div>
-                                            ) : '-'}
                                         </td>
                                     </tr>
                                 ))}

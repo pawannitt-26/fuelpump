@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAppStore } from '@/store/appStore';
 import { t } from '@/lib/i18n';
-import { LayoutDashboard, FileText, CheckCircle, FileSpreadsheet, LogOut, X, IndianRupee, ChevronLeft, ChevronRight, Users, Vault, CalendarCheck } from 'lucide-react';
+import { LayoutDashboard, FileText, CheckCircle, FileSpreadsheet, LogOut, X, IndianRupee, ChevronLeft, ChevronRight, Users, Vault, CalendarCheck, Droplet, BarChart3 } from 'lucide-react';
 
 export default function Sidebar() {
     const pathname = usePathname();
@@ -44,9 +44,19 @@ export default function Sidebar() {
             icon: <IndianRupee size={20} />
         }] : []),
         {
+            href: '/decantation',
+            label: "Decantation",
+            icon: <Droplet size={20} />
+        },
+        {
             href: '/dsr',
             label: t('dsrReport', language),
             icon: <FileSpreadsheet size={20} />
+        },
+        {
+            href: '/analytics',
+            label: "Analytics",
+            icon: <BarChart3 size={20} />
         }
     ];
 

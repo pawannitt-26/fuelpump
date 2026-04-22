@@ -113,8 +113,9 @@ export default function AdminDashboard() {
         });
 
         totalSale = lube + msAmt + hsdAmt;
+        const profit = msVol * 4.032 + hsdVol * 2.5713;
 
-        return { msVol, hsdVol, msAmt, hsdAmt, cash, online, lube, totalSale };
+        return { msVol, hsdVol, msAmt, hsdAmt, cash, online, lube, totalSale, profit };
     };
 
     // Derived Metrics
@@ -235,6 +236,15 @@ export default function AdminDashboard() {
                         <div className="p-2 bg-emerald-100/50 rounded-lg text-emerald-600"><Banknote size={18} /></div>
                     </div>
                     <div className="text-xl sm:text-3xl font-black text-emerald-900 tracking-tight">₹{stats.cash.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                </div>
+
+                {/* Profit Estimate */}
+                <div className="col-span-2 md:col-span-1 bg-gradient-to-br from-amber-50 to-orange-50/50 p-4 sm:p-6 rounded-xl sm:rounded-2xl border border-amber-100 shadow-sm md:col-start-3 md:row-start-1">
+                    <div className="flex justify-between items-start mb-2 sm:mb-4">
+                        <div className="text-[10px] sm:text-sm font-bold text-amber-800/60 uppercase tracking-widest">Est. Profit</div>
+                        <div className="p-2 bg-amber-100/50 rounded-lg text-amber-600"><TrendingUp size={18} /></div>
+                    </div>
+                    <div className="text-xl sm:text-3xl font-black text-amber-900 tracking-tight">₹{stats.profit.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
                 </div>
             </div>
 
@@ -398,6 +408,12 @@ export default function AdminDashboard() {
                                                                 <div>
                                                                     <div className="text-[9px] sm:text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-0.5">HSD</div>
                                                                     <div className="text-sm font-bold text-slate-600">{sw.stats.hsdVol.toLocaleString('en-IN', { maximumFractionDigits: 1 })} L</div>
+                                                                </div>
+                                                                <div className="col-span-2 pt-2 border-t border-slate-50">
+                                                                    <div className="flex justify-between items-center">
+                                                                        <div className="text-[9px] sm:text-[10px] text-amber-600 uppercase tracking-widest font-black">Est. Profit</div>
+                                                                        <div className="text-base font-black text-amber-700">₹{sw.stats.profit.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                                                                    </div>
                                                                 </div>
                                                             </div>
                                                             {sw.shiftId && (

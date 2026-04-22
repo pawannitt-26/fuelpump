@@ -434,7 +434,7 @@ function ShiftEntryContent() {
             const now = new Date();
             const [year, month, day] = date.split('-');
             const customTimestamp = new Date(Number(year), Number(month) - 1, Number(day), now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds()).toISOString();
-            
+
             let shiftId = editId;
 
             if (editId) {
@@ -584,7 +584,7 @@ function ShiftEntryContent() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         title: editId ? 'Shift Updated' : 'New Shift Submitted',
-                        message: `Manager ${user.name} has ${editId ? 'updated' : 'submitted'} Shift ${shift} on ${date}.`,
+                        message: `${user.name} has ${editId ? 'updated' : 'submitted'} Shift ${shift} on ${date}.`,
                         type: 'SHIFT_SUBMISSION',
                         link: `/shift/review/${shiftId}`,
                         triggeringUserId: user.id
@@ -986,7 +986,7 @@ function ShiftEntryContent() {
                             <label className="text-[9px] sm:text-xs font-bold text-emerald-600 uppercase tracking-widest sm:mb-2 block sm:w-auto w-16 shrink-0">Cash Rx</label>
                             <div className="flex items-center flex-1">
                                 <span className="text-emerald-500 font-medium mr-1 text-sm sm:text-xl">₹</span>
-                              <input type="number" inputMode="decimal" placeholder="0" className="w-full bg-white border border-emerald-200 rounded-lg sm:rounded-xl px-2 sm:px-4 py-1.5 sm:py-3 text-sm sm:text-2xl font-black text-slate-800 focus:ring-2 focus:ring-emerald-400/30 focus:outline-none placeholder:text-slate-300 transition-all"
+                                <input type="number" inputMode="decimal" placeholder="0" className="w-full bg-white border border-emerald-200 rounded-lg sm:rounded-xl px-2 sm:px-4 py-1.5 sm:py-3 text-sm sm:text-2xl font-black text-slate-800 focus:ring-2 focus:ring-emerald-400/30 focus:outline-none placeholder:text-slate-300 transition-all"
                                     value={lubeState.cash || ''}
                                     onChange={(e) => {
                                         const cash = parseFloat(e.target.value) || 0;

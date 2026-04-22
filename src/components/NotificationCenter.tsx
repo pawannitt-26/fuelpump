@@ -33,10 +33,15 @@ export default function NotificationCenter() {
 
         // Fetch initial notifications
         const fetchNotifications = async () => {
+            const threeDaysAgo = new Date();
+            threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+            const isoString = threeDaysAgo.toISOString();
+
             const { data } = await supabase
                 .from('notifications')
                 .select('*')
                 .eq('user_id', user.id)
+                .gte('created_at', isoString)
                 .order('created_at', { ascending: false })
                 .limit(20);
 
@@ -77,11 +82,21 @@ export default function NotificationCenter() {
         };
         document.addEventListener('mousedown', handleClickOutside);
 
+        // Close dropdown when scrolling
+        const handleScroll = () => {
+            if (isOpen) {
+                setIsOpen(false);
+            }
+        };
+        
+        window.addEventListener('scroll', handleScroll, { passive: true });
+
         return () => {
             supabase.removeChannel(channel);
             document.removeEventListener('mousedown', handleClickOutside);
+            window.removeEventListener('scroll', handleScroll);
         };
-    }, [user, isAdmin]);
+    }, [user, isAdmin, isOpen]);
 
     if (!isAdmin) return null;
 
