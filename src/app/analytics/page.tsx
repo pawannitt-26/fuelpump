@@ -4,36 +4,38 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   BarChart3,
   Calendar,
-  TrendingDown,
-  TrendingUp,
-  Droplets,
-  Database,
-  ArrowRight,
-  History,
-  Info,
-  ChevronDown,
   RefreshCw,
-  AlertCircle,
-  CheckCircle,
-  Clock
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { format, startOfMonth, endOfMonth, isFuture, parseISO, getDaysInMonth } from 'date-fns';
+import { format, parseISO, getDaysInMonth } from 'date-fns';
 import { dipToLiters } from '@/lib/fuelUtils';
-import { IndianRupee } from 'lucide-react';
-
-const MS_NOZZLES = ['Front-3', 'Front-4', 'Back-3', 'Back-4'];
-const HSD_NOZZLES = ['Front-1', 'Front-2', 'Back-1', 'Back-2'];
+import { useAppStore } from '@/store/appStore';
+import { useRouter } from 'next/navigation';
+import { ChevronDown, ChevronUp, Info, IndianRupee } from 'lucide-react';
 
 export default function AnalyticsPage() {
   const [selectedMonth, setSelectedMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [loading, setLoading] = useState(true);
   const [shifts, setShifts] = useState<any[]>([]);
   const [decantations, setDecantations] = useState<any[]>([]);
+  const [activeMobileTank, setActiveMobileTank] = useState<'T1' | 'T2' | 'T3'>('T1');
+  const [showProfitFormula, setShowProfitFormula] = useState(false);
+  const [liveRates, setLiveRates] = useState<Record<string, number>>({ MS: 106.06, HSD: 92.27 });
+
+  const { user } = useAppStore();
+  const router = useRouter();
 
   useEffect(() => {
-    fetchData();
-  }, [selectedMonth]);
+    if (user && user.role !== 'Admin') {
+      router.push('/dashboard/manager');
+    }
+  }, [user, router]);
+
+  useEffect(() => {
+    if (user?.role === 'Admin') {
+      fetchData();
+    }
+  }, [selectedMonth, user]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -47,7 +49,7 @@ export default function AnalyticsPage() {
         .from('shifts')
         .select(`
           id, shift_date, shift_number, ms_receipt, hsd_receipt,
-          shift_entries ( nozzle_no, opening_meter, closing_meter, testing_qty ),
+          shift_entries ( nozzle_no, opening_meter, closing_meter, testing_qty, amount ),
           shift_tanks ( tank_name, manual_dip )
         `)
         .gte('shift_date', startDate)
@@ -63,6 +65,24 @@ export default function AnalyticsPage() {
         .lte('date', endDate)
         .order('date', { ascending: true });
 
+      // 3. Fetch Latest Rates from DB
+      const { data: prodsData } = await supabase.from('products').select('id, name');
+      const ratesMap: Record<string, number> = { MS: 106.06, HSD: 92.27 };
+      if (prodsData) {
+        await Promise.all(prodsData.map(async (p) => {
+          const { data: rData } = await supabase
+            .from('rates')
+            .select('rate')
+            .eq('product_id', p.id)
+            .order('effective_date', { ascending: false })
+            .limit(1);
+          if (rData?.[0]?.rate) {
+            ratesMap[p.name] = parseFloat(rData[0].rate);
+          }
+        }));
+      }
+      setLiveRates(ratesMap);
+
       setShifts(shiftsData || []);
       setDecantations(decantData || []);
     } catch (error) {
@@ -76,104 +96,215 @@ export default function AnalyticsPage() {
   const stats = useMemo(() => {
     if (shifts.length === 0) return null;
 
-    let finalMsVariation = 0;
-    let finalHsdVariation = 0;
-
     const variationData: any[] = [];
 
-    const groupedByDate = shifts.reduce((acc: any, shift) => {
-      if (!acc[shift.shift_date]) acc[shift.shift_date] = [];
-      acc[shift.shift_date].push(shift);
-      return acc;
-    }, {});
+    // Grouping by Shift (Date + Shift Number)
+    shifts.forEach((shift, index) => {
+      const currentShiftNozzleSales = { tank1: 0, tank2: 0, tank3: 0 };
+      const currentShiftNozzleAmounts = { tank1: 0, tank2: 0, tank3: 0 };
 
-    const dates = Object.keys(groupedByDate).sort();
+      shift.shift_entries?.forEach((entry: any) => {
+        const sale = (parseFloat(entry.closing_meter) || 0) - (parseFloat(entry.opening_meter) || 0) - (parseFloat(entry.testing_qty) || 0);
+        const amount = parseFloat(entry.amount) || 0;
 
-    dates.forEach((date, index) => {
-      const dayShifts = groupedByDate[date];
-      const nextDayDate = dates[index + 1];
-      const nextDayShifts = nextDayDate ? groupedByDate[nextDayDate] : [];
-
-      // Calculate Day Sales (Nozzle)
-      let msNozzleSales = 0;
-      let hsdNozzleSales = 0;
-
-      dayShifts.forEach((shift: any) => {
-        shift.shift_entries?.forEach((entry: any) => {
-          const sale = (parseFloat(entry.closing_meter) || 0) - (parseFloat(entry.opening_meter) || 0) - (parseFloat(entry.testing_qty) || 0);
-          if (MS_NOZZLES.includes(entry.nozzle_no)) msNozzleSales += sale;
-          if (HSD_NOZZLES.includes(entry.nozzle_no)) hsdNozzleSales += sale;
-        });
+        // Mapping Logic:
+        // Tank 1 (HSD-1): Front-1, Front-2
+        // Tank 2 (HSD-2): Back-1, Back-2
+        // Tank 3 (MS-3): Front-3, Front-4, Back-3, Back-4
+        if (['Front-1', 'Front-2'].includes(entry.nozzle_no)) {
+          currentShiftNozzleSales.tank1 += sale;
+          currentShiftNozzleAmounts.tank1 += amount;
+        } else if (['Back-1', 'Back-2'].includes(entry.nozzle_no)) {
+          currentShiftNozzleSales.tank2 += sale;
+          currentShiftNozzleAmounts.tank2 += amount;
+        } else if (['Front-3', 'Front-4', 'Back-3', 'Back-4'].includes(entry.nozzle_no)) {
+          currentShiftNozzleSales.tank3 += sale;
+          currentShiftNozzleAmounts.tank3 += amount;
+        }
       });
 
-      // Calculate Day Stock Change (Tank)
-      const firstShift = dayShifts[0];
-      const nextDayFirstShift = nextDayShifts[0];
+      // Tank Sale (Physical) calculation
+      // For shift-wise variation, we need the NEXT shift's opening dip as our closing dip.
+      const nextShift = shifts[index + 1];
 
-      if (firstShift && nextDayFirstShift) {
-        // More robust dip volume retrieval
-        const getDayDipVol = (dayShifts: any[], tankNames: string[]) => {
-          let totalVol = 0;
-          tankNames.forEach(name => {
-            const tanks = dayShifts.flatMap(s => s.shift_tanks || []);
-            const match = tanks.find(t => t.tank_name === name && parseFloat(t.manual_dip) > 0);
-            if (match) totalVol += dipToLiters(parseFloat(match.manual_dip));
-          });
-          return totalVol;
+      let tank1Variation = 0;
+      let tank2Variation = 0;
+      let tank3Variation = 0;
+      let tank1Physical = 0;
+      let tank2Physical = 0;
+      let tank3Physical = 0;
+
+      if (nextShift) {
+        const getShiftDip = (s: any, tankName: string) => {
+          const match = s.shift_tanks?.find((t: any) => t.tank_name === tankName);
+          return parseFloat(match?.manual_dip) || 0;
         };
-        
-        const msOpening = getDayDipVol(dayShifts, ['3-MS']);
-        const hsdOpening = getDayDipVol(dayShifts, ['1-HSD', '2-HSD']);
-        const msClosing = getDayDipVol(nextDayShifts, ['3-MS']);
-        const hsdClosing = getDayDipVol(nextDayShifts, ['1-HSD', '2-HSD']);
 
-        const msReceipts = dayShifts.reduce((sum: number, s: any) => sum + (parseFloat(s.ms_receipt) || 0), 0);
-        const hsdReceipts = dayShifts.reduce((sum: number, s: any) => sum + (parseFloat(s.hsd_receipt) || 0), 0);
+        const t1Opening = getShiftDip(shift, '1-HSD');
+        const t2Opening = getShiftDip(shift, '2-HSD');
+        const t3Opening = getShiftDip(shift, '3-MS');
 
-        // Formula: (Opening + Receipts) - Closing = Total physical stock change (Tank Sale)
-        // Only calculate variation if both opening and closing dips are present
-        const msTankSale = (msOpening > 0 && msClosing > 0) ? (msOpening + msReceipts) - msClosing : 0;
-        const hsdTankSale = (hsdOpening > 0 && hsdClosing > 0) ? (hsdOpening + hsdReceipts) - hsdClosing : 0;
+        const t1Closing = getShiftDip(nextShift, '1-HSD');
+        const t2Closing = getShiftDip(nextShift, '2-HSD');
+        const t3Closing = getShiftDip(nextShift, '3-MS');
 
-        variationData.push({
-          date,
-          ms: { 
-            nozzle: msNozzleSales, 
-            tank: msTankSale, 
-            diff: (msOpening > 0 && msClosing > 0) ? msNozzleSales - msTankSale : 0 
-          },
-          hsd: { 
-            nozzle: hsdNozzleSales, 
-            tank: hsdTankSale, 
-            diff: (hsdOpening > 0 && hsdClosing > 0) ? hsdNozzleSales - hsdTankSale : 0 
-          }
-        });
+        const t1Receipt = parseFloat(shift.hsd_receipt) || 0; // Assuming receipts are tied to the shift they were entered in
+        const t2Receipt = 0; // If total hsd_receipt covers both, we might need more logic, but user says HSD-1 and HSD-2 are separate tanks. 
+        // Typically, decantations are mapped to specific tanks.
+        // Let's look at decantations for the exact shift if possible.
+
+        // Refined Receipt logic:
+        const t1VolOpening = dipToLiters(t1Opening);
+        const t2VolOpening = dipToLiters(t2Opening);
+        const t3VolOpening = dipToLiters(t3Opening);
+        const t1VolClosing = dipToLiters(t1Closing);
+        const t2VolClosing = dipToLiters(t2Closing);
+        const t3VolClosing = dipToLiters(t3Closing);
+
+        // Receipts from the shifts table (usually entered in shift 1 or 2)
+        // Wait, the decantations table has receipt_hsd1 and receipt_hsd2!
+        // Let's find decantations for this specific date
+        const dayDecants = decantations.filter(d => d.date === shift.shift_date);
+        const t1ReceiptVol = dayDecants.reduce((sum, d) => sum + (parseFloat(d.receipt_hsd1) || 0), 0) / (shift.shift_number === 1 ? 1 : 1);
+        // This is tricky because decants are daily. Let's assume receipts happen in Shift 1 for calculation simplicity OR check shift_date.
+        // For now, let's use the shift's own receipt fields if they exist.
+        const sT1Receipt = parseFloat(shift.hsd_receipt_1) || 0; // Hypothetical, let's stick to decantations if available.
+
+        // Standard formula: Opening + Receipt - Closing = Physical Sale
+        // Since decantations are daily, let's only add receipts to the shift they belong to.
+        // If we don't know the shift of receipt, we'll assign it to shift 1.
+        const isShift1 = shift.shift_number === 1;
+        const t1Rec = isShift1 ? dayDecants.reduce((sum, d) => sum + (parseFloat(d.receipt_hsd1) || 0), 0) : 0;
+        const t2Rec = isShift1 ? dayDecants.reduce((sum, d) => sum + (parseFloat(d.receipt_hsd2) || 0), 0) : 0;
+        const t3Rec = isShift1 ? dayDecants.reduce((sum, d) => sum + (parseFloat(d.receipt_ms) || 0), 0) : 0;
+
+        tank1Physical = (t1VolOpening > 0 && t1VolClosing > 0) ? (t1VolOpening + t1Rec) - t1VolClosing : 0;
+        tank2Physical = (t2VolOpening > 0 && t2VolClosing > 0) ? (t2VolOpening + t2Rec) - t2VolClosing : 0;
+        tank3Physical = (t3VolOpening > 0 && t3VolClosing > 0) ? (t3VolOpening + t3Rec) - t3VolClosing : 0;
+
+        if (t1VolOpening > 0 && t1VolClosing > 0) tank1Variation = currentShiftNozzleSales.tank1 - tank1Physical;
+        if (t2VolOpening > 0 && t2VolClosing > 0) tank2Variation = currentShiftNozzleSales.tank2 - tank2Physical;
+        if (t3VolOpening > 0 && t3VolClosing > 0) tank3Variation = currentShiftNozzleSales.tank3 - tank3Physical;
       }
+
+      variationData.push({
+        date: shift.shift_date,
+        shift_number: shift.shift_number,
+        t1: { nozzle: currentShiftNozzleSales.tank1, tank: tank1Physical, diff: tank1Variation, amount: currentShiftNozzleAmounts.tank1 },
+        t2: { nozzle: currentShiftNozzleSales.tank2, tank: tank2Physical, diff: tank2Variation, amount: currentShiftNozzleAmounts.tank2 },
+        t3: { nozzle: currentShiftNozzleSales.tank3, tank: tank3Physical, diff: tank3Variation, amount: currentShiftNozzleAmounts.tank3 },
+      });
     });
 
-    finalMsVariation = variationData.reduce((sum, row) => sum + row.ms.diff, 0);
-    finalHsdVariation = variationData.reduce((sum, row) => sum + row.hsd.diff, 0);
+    // Month Start Readings (First shift of the month)
+    const firstShift = shifts[0];
+    const monthStartReadings = firstShift?.shift_entries?.map((e: any) => ({
+      nozzle: e.nozzle_no,
+      reading: e.opening_meter
+    })) || [];
 
-    const totalMsSales = variationData.reduce((sum, row) => sum + row.ms.nozzle, 0);
-    const totalHsdSales = variationData.reduce((sum, row) => sum + row.hsd.nozzle, 0);
-    const totalProfit = totalMsSales * 4.032 + totalHsdSales * 2.5713;
+    // Latest Shift Readings (Last recorded shift)
+    const latestShift = shifts[shifts.length - 1];
+    const latestClosingReadings = latestShift?.shift_entries?.map((e: any) => ({
+      nozzle: e.nozzle_no,
+      reading: e.closing_meter
+    })) || [];
+
+    const nozzleSalesSummary = monthStartReadings.map((start: any) => {
+      const end = latestClosingReadings.find((r: any) => r.nozzle === start.nozzle);
+      const opening = parseFloat(start.reading) || 0;
+      const closing = parseFloat(end?.reading) || 0;
+      return {
+        nozzle: start.nozzle,
+        opening,
+        closing,
+        sale: (closing > 0 && opening > 0 && closing >= opening) ? (closing - opening) : 0
+      };
+    });
+
+    const totalT1Sales = variationData.reduce((sum, row) => sum + row.t1.nozzle, 0);
+    const totalT2Sales = variationData.reduce((sum, row) => sum + row.t2.nozzle, 0);
+    const totalT3Sales = variationData.reduce((sum, row) => sum + row.t3.nozzle, 0);
+
+    // Total profit: MS * 4.032 + HSD * 2.5713
+    // T1 & T2 are HSD, T3 is MS
+    const totalProfit = (totalT3Sales * 4.032) + ((totalT1Sales + totalT2Sales) * 2.5713);
+
+    // Total Sales Amounts (from shift entries)
+    const totalSalesAmountMS = variationData.reduce((sum, row) => sum + row.t3.amount, 0);
+    const totalSalesAmountHSD = variationData.reduce((sum, row) => sum + row.t1.amount + row.t2.amount, 0);
+    const totalSalesAmountOverall = totalSalesAmountMS + totalSalesAmountHSD;
+
+    // Total Spent on Fuel (from decantations)
+    const totalSpentMS = decantations.reduce((sum, d) => sum + (parseFloat(d.invoice_amount_ms) || 0), 0);
+    const totalSpentHSD = decantations.reduce((sum, d) => sum + (parseFloat(d.invoice_amount_hsd) || 0), 0);
+    const totalSpentOverall = totalSpentMS + totalSpentHSD;
+
+    // Total Receipt Volumes
+    const totalReceiptMS = decantations.reduce((sum, d) => sum + (parseFloat(d.receipt_ms) || 0), 0);
+    const totalReceiptHSD = decantations.reduce((sum, d) => sum + (parseFloat(d.receipt_hsd1) || 0) + (parseFloat(d.receipt_hsd2) || 0), 0);
+
+    // --- Theoretical Profit ---
+    const getTankVolumes = (s: any) => {
+      if (!s) return { t1: 0, t2: 0, t3: 0 };
+      const t1 = parseFloat(s.shift_tanks?.find((t: any) => t.tank_name === '1-HSD')?.manual_dip) || 0;
+      const t2 = parseFloat(s.shift_tanks?.find((t: any) => t.tank_name === '2-HSD')?.manual_dip) || 0;
+      const t3 = parseFloat(s.shift_tanks?.find((t: any) => t.tank_name === '3-MS')?.manual_dip) || 0;
+      return {
+        t1: dipToLiters(t1),
+        t2: dipToLiters(t2),
+        t3: dipToLiters(t3)
+      };
+    };
+
+    const openingTanks = getTankVolumes(firstShift);
+    const closingTanks = getTankVolumes(latestShift);
+    
+    // Product-wise Depletion Logic (Net per product group)
+    const netMSDepletion = openingTanks.t3 - closingTanks.t3;
+    const netHSDDepletion = (openingTanks.t1 + openingTanks.t2) - (closingTanks.t1 + closingTanks.t2);
+    
+    // Average cost per product (Using Live Rates from DB as requested)
+    const avgCostMS = liveRates.MS;
+    const avgCostHSD = liveRates.HSD;
+    
+    const depletionValueMS = netMSDepletion > 0 ? (netMSDepletion * avgCostMS) : 0;
+    const depletionValueHSD = netHSDDepletion > 0 ? (netHSDDepletion * avgCostHSD) : 0;
+    
+    const depletionValue = depletionValueMS + depletionValueHSD;
+    const theoreticalProfit = totalSalesAmountOverall - totalSpentOverall - depletionValue;
 
     return {
-      totalMsSales,
-      totalHsdSales,
-      totalMsVariation: finalMsVariation,
-      totalHsdVariation: finalHsdVariation,
+      totalT1Sales,
+      totalT2Sales,
+      totalT3Sales,
       totalProfit,
-      openingDay: shifts[0],
-      closingDayShift: shifts[shifts.length - 1],
-      closingDayStr: `${selectedMonth}-${String(getDaysInMonth(parseISO(`${selectedMonth}-01`))).padStart(2, '0')}`,
+      totalSpentMS,
+      totalSpentHSD,
+      totalSpentOverall,
+      totalSalesAmountMS,
+      totalSalesAmountHSD,
+      totalSalesAmountOverall,
+      theoreticalProfit,
+      stockDepletion: (netMSDepletion > 0 ? netMSDepletion : 0) + (netHSDDepletion > 0 ? netHSDDepletion : 0),
+      depletionValue,
+      avgCostMS,
+      avgCostHSD,
+      openingTanks,
+      closingTanks,
+      totalReceiptMS,
+      totalReceiptHSD,
+      monthStartReadings,
+      latestClosingReadings,
+      nozzleSalesSummary,
+      firstShiftDate: firstShift?.shift_date,
+      latestShiftDate: latestShift?.shift_date,
       variationData,
-      decantSummary: decantations.reduce((acc, d) => ({
-        ms: acc.ms + (Number(d.receipt_ms) || 0),
-        hsd: acc.hsd + (Number(d.receipt_hsd1) || 0) + (Number(d.receipt_hsd2) || 0)
-      }), { ms: 0, hsd: 0 })
+      totalT1Variation: variationData.reduce((sum, row) => sum + row.t1.diff, 0),
+      totalT2Variation: variationData.reduce((sum, row) => sum + row.t2.diff, 0),
+      totalT3Variation: variationData.reduce((sum, row) => sum + row.t3.diff, 0),
     };
-  }, [shifts, decantations, selectedMonth]);
+  }, [shifts, decantations, selectedMonth, liveRates]);
 
   if (loading) {
     return (
@@ -189,300 +320,411 @@ export default function AnalyticsPage() {
     );
   }
 
-  const openingStock = stats?.openingDay ? {
-    ms: stats.openingDay.shift_tanks?.filter((t: any) => t.tank_name === '3-MS').reduce((sum: number, t: any) => sum + dipToLiters(parseFloat(t.manual_dip) || 0), 0),
-    hsd: stats.openingDay.shift_tanks?.filter((t: any) => t.tank_name.includes('HSD')).reduce((sum: number, t: any) => sum + dipToLiters(parseFloat(t.manual_dip) || 0), 0)
-  } : { ms: 0, hsd: 0 };
 
-  const closingStock = stats?.closingDayShift ? {
-    ms: stats.closingDayShift.shift_tanks?.filter((t: any) => t.tank_name === '3-MS').reduce((sum: number, t: any) => sum + dipToLiters(parseFloat(t.manual_dip) || 0), 0),
-    hsd: stats.closingDayShift.shift_tanks?.filter((t: any) => t.tank_name.includes('HSD')).reduce((sum: number, t: any) => sum + dipToLiters(parseFloat(t.manual_dip) || 0), 0)
-  } : null;
 
   return (
-    <div className="p-4 md:p-6 lg:p-8 max-w-7xl mx-auto space-y-6 md:space-y-8 bg-slate-50/30 min-h-screen">
+    <div className="p-2 sm:p-4 md:p-6 max-w-7xl mx-auto space-y-4 bg-slate-50/50 min-h-screen text-slate-800 overflow-hidden">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-slate-800 tracking-tight flex items-center gap-3">
-            <BarChart3 className="text-blue-600" size={32} />
+          <h1 className="text-xl font-bold text-slate-800 tracking-tight flex items-center gap-2">
+            <BarChart3 className="text-blue-600" size={20} />
             Analytics Dashboard
           </h1>
-          <p className="text-slate-500 mt-1 flex items-center gap-1.5 text-sm md:text-base">
-            Performance insights for <span className="font-bold text-slate-700 bg-white px-2 py-0.5 rounded-lg border border-slate-200">{format(parseISO(`${selectedMonth}-01`), 'MMMM yyyy')}</span>
-          </p>
         </div>
 
-        <div className="flex items-center gap-3 bg-white p-2 rounded-2xl border border-slate-100 shadow-sm">
-          <Calendar className="text-slate-400 ml-2" size={20} />
+        <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm">
+          <Calendar className="text-slate-400" size={16} />
           <input
             type="month"
             value={selectedMonth}
             onChange={(e) => setSelectedMonth(e.target.value)}
-            className="border-0 focus:ring-0 text-slate-700 font-bold bg-transparent cursor-pointer"
+            className="border-0 focus:ring-0 text-slate-700 font-semibold bg-transparent cursor-pointer text-sm p-0 w-32"
           />
           <button
             onClick={fetchData}
-            className="p-2 hover:bg-slate-50 rounded-xl transition-colors text-slate-400 hover:text-blue-600"
+            className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-blue-600 transition-colors"
+            title="Refresh Data"
           >
-            <RefreshCw size={18} />
+            <RefreshCw size={14} />
           </button>
         </div>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+      {/* KPI Grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 sm:gap-3">
         {[
-          { label: 'Total MS Sales', value: stats?.totalMsSales, unit: 'Ltrs', icon: Droplets, color: 'blue' },
-          { label: 'Total HSD Sales', value: stats?.totalHsdSales, unit: 'Ltrs', icon: Droplets, color: 'emerald' },
+          { label: 'T1 (HSD-1)', value: stats?.totalT1Sales, unit: 'L', color: 'text-blue-600' },
+          { label: 'T2 (HSD-2)', value: stats?.totalT2Sales, unit: 'L', color: 'text-emerald-600' },
+          { label: 'T3 (MS-3)', value: stats?.totalT3Sales, unit: 'L', color: 'text-amber-600' },
           {
-            label: 'MS Variation',
-            value: stats?.totalMsVariation,
-            unit: 'Ltrs',
-            icon: stats?.totalMsVariation! >= 0 ? TrendingUp : TrendingDown,
-            color: stats?.totalMsVariation! >= 0 ? 'emerald' : 'red',
-            showTrend: true
+            label: 'Total Var',
+            value: (stats?.totalT1Variation || 0) + (stats?.totalT2Variation || 0) + (stats?.totalT3Variation || 0),
+            unit: 'L',
+            color: ((stats?.totalT1Variation || 0) + (stats?.totalT2Variation || 0) + (stats?.totalT3Variation || 0)) >= 0 ? 'text-emerald-600' : 'text-red-600',
           },
           {
-            label: 'HSD Variation',
-            value: stats?.totalHsdVariation,
-            unit: 'Ltrs',
-            icon: stats?.totalHsdVariation! >= 0 ? TrendingUp : TrendingDown,
-            color: stats?.totalHsdVariation! >= 0 ? 'emerald' : 'red',
-            showTrend: true
-          },
+            label: 'Est. Profit',
+            value: stats?.totalProfit,
+            unit: '',
+            color: 'text-indigo-600',
+            isCurrency: true
+          }
         ].map((kpi, i) => (
-          <div key={i} className="bg-white p-6 rounded-2xl md:rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-md transition-all group overflow-hidden relative">
-            <div className="flex items-center gap-4 mb-4">
-              <div className={`p-3 bg-${kpi.color}-50 text-${kpi.color}-600 rounded-2xl group-hover:scale-110 transition-transform`}>
-                <kpi.icon size={22} />
-              </div>
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{kpi.label}</span>
-            </div>
-            <div className="flex items-baseline gap-2">
-              <span className={`text-2xl md:text-3xl font-black text-slate-800 ${kpi.showTrend && kpi.value! < 0 ? 'text-red-600' : ''}`}>
-                {kpi.value?.toLocaleString() || '0'}
+          <div key={i} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">{kpi.label}</p>
+            <div className="flex items-baseline gap-1">
+              {kpi.isCurrency && <span className={`font-semibold text-sm ${kpi.color}`}>₹</span>}
+              <span className={`text-lg font-bold ${kpi.color}`}>
+                {kpi.isCurrency
+                  ? kpi.value?.toLocaleString('en-IN', { maximumFractionDigits: 0 })
+                  : kpi.value?.toLocaleString() || '0'}
               </span>
-              <span className="text-slate-400 font-bold text-xs md:text-sm">{kpi.unit}</span>
+              {!kpi.isCurrency && <span className="text-xs text-slate-400 font-medium">{kpi.unit}</span>}
             </div>
           </div>
         ))}
+      </div>
 
-        {/* Profit Card */}
-        <div className="md:col-span-2 lg:col-span-4 bg-gradient-to-br from-amber-500 to-orange-600 p-6 md:p-8 rounded-2xl md:rounded-[2.5rem] shadow-xl shadow-amber-500/20 relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-110 transition-transform">
-            <IndianRupee size={120} className="text-white" />
-          </div>
-          <div className="relative z-10">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-2 bg-white/20 backdrop-blur-md rounded-xl text-white">
-                <TrendingUp size={20} />
-              </div>
-              <span className="text-xs font-bold text-white/80 uppercase tracking-widest">Monthly Estimated Profit</span>
-            </div>
-            <div className="flex items-baseline gap-3">
-              <span className="text-3xl md:text-5xl font-black text-white tracking-tight">
-                ₹{stats?.totalProfit.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+      {/* Financial Purchase Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
+        {[
+          { label: 'Purchase: Petrol (MS)', value: stats?.totalSpentMS, color: 'text-amber-600' },
+          { label: 'Purchase: Diesel (HSD)', value: stats?.totalSpentHSD, color: 'text-emerald-600' },
+          { label: 'Total Fuel Purchase', value: stats?.totalSpentOverall, color: 'text-slate-900' },
+        ].map((kpi, i) => (
+          <div key={i} className={`bg-white p-3 rounded-xl border border-slate-200 shadow-sm`}>
+            <p className={`text-[10px] font-bold uppercase tracking-wider mb-1 text-slate-400`}>{kpi.label}</p>
+            <div className="flex items-baseline gap-1">
+              <span className={`font-semibold text-sm ${kpi.color}`}>₹</span>
+              <span className={`text-lg font-bold ${kpi.color}`}>
+                {kpi.value?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
               </span>
-              <span className="text-white/60 font-bold text-lg">INR</span>
             </div>
-            <p className="text-white/60 text-xs mt-4 font-medium flex items-center gap-2">
-              <Info size={14} /> Based on MS: ₹4.032/L and HSD: ₹2.5713/L profit margins
-            </p>
           </div>
+        ))}
+      </div>
+      {/* Financial Sales Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
+        {[
+          { label: 'Sales: Petrol (MS)', value: stats?.totalSalesAmountMS, color: 'text-amber-600' },
+          { label: 'Sales: Diesel (HSD)', value: stats?.totalSalesAmountHSD, color: 'text-emerald-600' },
+          { label: 'Total Fuel Sales', value: stats?.totalSalesAmountOverall, color: 'text-slate-900' },
+        ].map((kpi, i) => (
+          <div key={i} className={`bg-white p-3 rounded-xl border border-slate-200 shadow-sm`}>
+            <p className={`text-[10px] font-bold uppercase tracking-wider mb-1 text-slate-400`}>{kpi.label}</p>
+            <div className="flex items-baseline gap-1">
+              <span className={`font-semibold text-sm ${kpi.color}`}>₹</span>
+              <span className={`text-lg font-bold ${kpi.color}`}>
+                {kpi.value?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Theoretical Profit Card */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl">
+              <IndianRupee size={20} />
+            </div>
+            <div>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Theoretical Profit (Net)</p>
+              <h2 className={`text-2xl font-black ${(stats?.theoreticalProfit || 0) >= 0 ? 'text-slate-800' : 'text-red-600'}`}>
+                ₹ {stats?.theoreticalProfit?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+              </h2>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowProfitFormula(!showProfitFormula)}
+            className="flex items-center gap-1.5 text-[10px] font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition-colors"
+          >
+            <Info size={14} />
+            {showProfitFormula ? 'Hide Formula' : 'Audit Formula'}
+            {showProfitFormula ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+        </div>
+
+        {showProfitFormula && (
+          <div className="px-4 pb-4 pt-2 border-t border-slate-50 bg-slate-50/30 animate-in slide-in-from-top-2 duration-200">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-[11px]">
+              <div className="space-y-1">
+                <p className="text-slate-400 font-bold uppercase tracking-tighter">Gross Margin</p>
+                <p className="text-slate-700 font-medium">Sales (₹{stats?.totalSalesAmountOverall.toLocaleString('en-IN')}) - Purchase (₹{stats?.totalSpentOverall.toLocaleString('en-IN')})</p>
+                <p className="text-blue-600 font-bold">= ₹{(stats?.totalSalesAmountOverall! - stats?.totalSpentOverall!).toLocaleString('en-IN')}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-slate-400 font-bold uppercase tracking-tighter">Stock Audit (Tank-wise)</p>
+                <div className="space-y-1 mt-1">
+                  {[
+                    { label: 'T1 (HSD)', open: stats?.openingTanks.t1, close: stats?.closingTanks.t1 },
+                    { label: 'T2 (HSD)', open: stats?.openingTanks.t2, close: stats?.closingTanks.t2 },
+                    { label: 'T3 (MS)', open: stats?.openingTanks.t3, close: stats?.closingTanks.t3 },
+                  ].map((tank, i) => (
+                    <div key={i} className="flex justify-between border-b border-slate-100 pb-0.5 last:border-0">
+                      <span className="text-slate-500">{tank.label}:</span>
+                      <span className="font-medium text-slate-700">
+                        {tank.open?.toLocaleString()} → {tank.close?.toLocaleString()} 
+                        <span className={`ml-1 text-[9px] ${(tank.close || 0) < (tank.open || 0) ? 'text-amber-600' : 'text-emerald-600'}`}>
+                          ({((tank.close || 0) - (tank.open || 0)).toLocaleString()})
+                        </span>
+                      </span>
+                    </div>
+                  ))}
+                  <div className="pt-1 text-[9px] text-slate-400 font-bold uppercase border-t border-slate-100 mt-1">
+                    Rates: MS @ ₹{stats?.avgCostMS.toFixed(2)} | HSD @ ₹{stats?.avgCostHSD.toFixed(2)}
+                  </div>
+                </div>
+                <p className="text-amber-600 font-bold pt-1">
+                  Depletion Adj: - ₹{stats?.depletionValue?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                </p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-slate-400 font-bold uppercase tracking-tighter">Final Calculation</p>
+                <div className="bg-white p-2 rounded border border-slate-100 space-y-1">
+                  <div className="flex justify-between text-slate-500">
+                    <span>Gross Margin:</span>
+                    <span>₹{(stats?.totalSalesAmountOverall! - stats?.totalSpentOverall!).toLocaleString('en-IN')}</span>
+                  </div>
+                  <div className="flex justify-between text-amber-600">
+                    <span>Stock Depletion:</span>
+                    <span>- ₹{stats?.depletionValue?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
+                  </div>
+                  <div className="flex justify-between border-t border-slate-100 pt-1 font-black text-indigo-600 text-[13px]">
+                    <span>Net Profit:</span>
+                    <span>₹{stats?.theoreticalProfit?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Fuel Sold Stats Bar */}
+      <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center gap-3">
+        <div className="whitespace-nowrap">
+          <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
+            Volume Dist.
+          </h3>
+        </div>
+        <div className="flex-1 w-full flex h-5 rounded overflow-hidden border border-slate-100">
+          {[
+            { label: 'HSD-1', value: stats?.totalT1Sales || 0, color: 'bg-blue-500' },
+            { label: 'HSD-2', value: stats?.totalT2Sales || 0, color: 'bg-emerald-500' },
+            { label: 'MS-3', value: stats?.totalT3Sales || 0, color: 'bg-amber-500' }
+          ].map((tank, i) => {
+            const total = (stats?.totalT1Sales || 0) + (stats?.totalT2Sales || 0) + (stats?.totalT3Sales || 0);
+            const width = total > 0 ? (tank.value / total) * 100 : 0;
+            if (width === 0) return null;
+            return (
+              <div key={i} style={{ width: `${width}%` }} className={`${tank.color} relative flex items-center justify-center text-[9px] font-bold text-white px-1`}>
+                {width > 10 ? `${tank.label} (${width.toFixed(0)}%)` : ''}
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* Opening & Closing Stats */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Opening Day */}
-        <div className="bg-white p-6 rounded-2xl md:rounded-3xl border border-slate-100 shadow-sm relative overflow-hidden group">
-          <div className="absolute top-0 left-0 w-1.5 h-full bg-blue-500" />
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl">
-                <History size={20} />
-              </div>
-              <div>
-                <h3 className="font-black text-slate-800 text-lg">Opening Day Stats</h3>
-                <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">1st {format(parseISO(`${selectedMonth}-01`), 'MMM yyyy')}</p>
-              </div>
-            </div>
+      {/* Monthly Meter & Sales Audit */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">Monthly Meter & Sales Audit</h3>
+          <div className="flex gap-4">
+            {stats?.firstShiftDate && <span className="text-[9px] font-bold text-slate-400">Start: {format(parseISO(stats.firstShiftDate), 'dd MMM')}</span>}
+            {stats?.latestShiftDate && <span className="text-[9px] font-bold text-slate-400">End: {format(parseISO(stats.latestShiftDate), 'dd MMM')}</span>}
           </div>
-
-          {stats?.openingDay ? (
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-slate-50/50 p-4 rounded-xl md:rounded-2xl border border-slate-100 group-hover:bg-blue-50/30 transition-colors">
-                <p className="text-[9px] font-black text-slate-400 uppercase mb-1 tracking-widest">MS Stock</p>
-                <p className="text-lg md:text-xl font-black text-slate-800">{openingStock.ms?.toLocaleString()} <span className="text-[10px] font-bold text-slate-400 uppercase">L</span></p>
-              </div>
-              <div className="bg-slate-50/50 p-4 rounded-xl md:rounded-2xl border border-slate-100 group-hover:bg-blue-50/30 transition-colors">
-                <p className="text-[9px] font-black text-slate-400 uppercase mb-1 tracking-widest">HSD Stock</p>
-                <p className="text-lg md:text-xl font-black text-slate-800">{openingStock.hsd?.toLocaleString()} <span className="text-[10px] font-bold text-slate-400 uppercase">L</span></p>
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-8 text-slate-400 border-2 border-dashed border-slate-100 rounded-2xl">
-              <AlertCircle size={24} className="mb-2 opacity-20" />
-              <p className="font-bold text-xs uppercase tracking-widest">No Baseline Data</p>
-            </div>
-          )}
         </div>
-
-        {/* Closing Day */}
-        <div className="bg-white p-6 rounded-2xl md:rounded-3xl border border-slate-100 shadow-sm relative overflow-hidden group">
-          <div className="absolute top-0 right-0 w-1.5 h-full bg-emerald-500" />
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl">
-                <Database size={20} />
-              </div>
-              <div>
-                <h3 className="font-black text-slate-800 text-lg">Closing Day Stats</h3>
-                <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">Audit Results</p>
-              </div>
-            </div>
-          </div>
-
-          {isFuture(parseISO(stats?.closingDayStr || '')) ? (
-            <div className="flex flex-col items-center justify-center py-8 bg-slate-50/50 border-2 border-dashed border-slate-100 rounded-2xl">
-              <Clock className="text-slate-300 animate-pulse mb-2" size={24} />
-              <p className="font-black text-slate-400 uppercase tracking-widest text-[9px] mb-1">Month in Progress</p>
-            </div>
-          ) : closingStock ? (
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-slate-50/50 p-4 rounded-xl md:rounded-2xl border border-slate-100 group-hover:bg-emerald-50/30 transition-colors">
-                <p className="text-[9px] font-black text-slate-400 uppercase mb-1 tracking-widest">MS Stock</p>
-                <p className="text-lg md:text-xl font-black text-slate-800">{closingStock.ms?.toLocaleString()} <span className="text-[10px] font-bold text-slate-400 uppercase">L</span></p>
-              </div>
-              <div className="bg-slate-50/50 p-4 rounded-xl md:rounded-2xl border border-slate-100 group-hover:bg-emerald-50/30 transition-colors">
-                <p className="text-[9px] font-black text-slate-400 uppercase mb-1 tracking-widest">HSD Stock</p>
-                <p className="text-lg md:text-xl font-black text-slate-800">{closingStock.hsd?.toLocaleString()} <span className="text-[10px] font-bold text-slate-400 uppercase">L</span></p>
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-8 text-slate-400 border-2 border-dashed border-slate-100 rounded-2xl">
-              <AlertCircle size={24} className="mb-2 opacity-20" />
-              <p className="font-bold text-xs uppercase tracking-widest">Awaiting Closure</p>
-            </div>
-          )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-slate-50/30">
+                <th className="px-4 py-2 text-left text-[9px] font-bold text-slate-400 uppercase tracking-widest border-b">Nozzle</th>
+                <th className="px-4 py-2 text-right text-[9px] font-bold text-slate-400 uppercase tracking-widest border-b">Opening</th>
+                <th className="px-4 py-2 text-right text-[9px] font-bold text-slate-400 uppercase tracking-widest border-b">Closing</th>
+                <th className="px-4 py-2 text-right text-[9px] font-bold text-blue-600 uppercase tracking-widest border-b bg-blue-50/30">Total Sale</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {stats?.nozzleSalesSummary.map((nr: any, i: number) => (
+                <tr key={i} className="hover:bg-slate-50/50 transition-colors">
+                  <td className="px-4 py-2 font-bold text-slate-600 uppercase tracking-wider">{nr.nozzle}</td>
+                  <td className="px-4 py-2 text-right text-slate-500">{nr.opening.toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right text-slate-500">{nr.closing.toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right font-bold text-blue-600 bg-blue-50/10">{nr.sale.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot className="bg-slate-50 font-bold border-t border-slate-200 text-slate-700">
+              <tr>
+                <td colSpan={3} className="px-4 py-2 text-right uppercase text-[9px] tracking-widest text-slate-400">Monthly Total (HSD)</td>
+                <td className="px-4 py-2 text-right text-emerald-600">{(stats?.totalT1Sales + stats?.totalT2Sales).toLocaleString()} L</td>
+              </tr>
+              <tr>
+                <td colSpan={3} className="px-4 py-2 text-right uppercase text-[9px] tracking-widest text-slate-400">Monthly Total (MS)</td>
+                <td className="px-4 py-2 text-right text-amber-600">{stats?.totalT3Sales.toLocaleString()} L</td>
+              </tr>
+            </tfoot>
+          </table>
         </div>
       </div>
 
       {/* Receipts History */}
-      <div className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="p-6 border-b border-slate-200 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-amber-50 text-amber-600 rounded-xl">
-              <History size={20} />
-            </div>
-            <h3 className="font-black text-slate-800 text-lg">Receipt History</h3>
-          </div>
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/50">
+          <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">Receipt History</h3>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-xs">
             <thead>
-              <tr className="bg-slate-50/50">
-                <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">Date</th>
-                <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">Vehicle</th>
-                <th className="px-6 py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">MS</th>
-                <th className="px-6 py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">HSD</th>
-                <th className="px-6 py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">Status</th>
+              <tr className="bg-slate-50/30">
+                <th className="px-4 py-2 text-left text-[9px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">Date</th>
+                <th className="px-4 py-2 text-left text-[9px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">Vehicle</th>
+                <th className="px-4 py-2 text-right text-[9px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">MS</th>
+                <th className="px-4 py-2 text-right text-[9px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">HSD</th>
+                <th className="px-4 py-2 text-right text-[9px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200">
+            <tbody className="divide-y divide-slate-100">
               {decantations.map((d, i) => (
                 <tr key={i} className="hover:bg-slate-50/50">
-                  <td className="px-6 py-4 font-bold text-slate-700 border-r border-slate-100">{format(parseISO(d.date), 'dd MMM')}</td>
-                  <td className="px-6 py-4 text-slate-500 font-medium">{d.vehicle_no}</td>
-                  <td className="px-6 py-4 text-right font-black text-slate-800">{d.receipt_ms || 0}</td>
-                  <td className="px-6 py-4 text-right font-black text-slate-800">{(Number(d.receipt_hsd1) + Number(d.receipt_hsd2)).toLocaleString()}</td>
-                  <td className="px-6 py-4 text-right">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${d.status === 'Approved' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                  <td className="px-4 py-2 font-medium text-slate-700 whitespace-nowrap">{format(parseISO(d.date), 'dd MMM')}</td>
+                  <td className="px-4 py-2 text-slate-500">{d.vehicle_no}</td>
+                  <td className="px-4 py-2 text-right font-medium text-slate-700">{d.receipt_ms || 0}</td>
+                  <td className="px-4 py-2 text-right font-medium text-slate-700">{(Number(d.receipt_hsd1) + Number(d.receipt_hsd2)).toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right">
+                    <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold uppercase ${d.status === 'Approved' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-amber-50 text-amber-600 border border-amber-100'}`}>
                       {d.status}
                     </span>
                   </td>
                 </tr>
               ))}
+              {decantations.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-4 text-center text-slate-400 text-xs italic">No receipts found for this period.</td>
+                </tr>
+              )}
             </tbody>
+            {decantations.length > 0 && (
+              <tfoot className="bg-slate-50 font-bold border-t border-slate-200 text-slate-700">
+                <tr>
+                  <td colSpan={2} className="px-4 py-2 text-left uppercase text-[9px] tracking-widest text-slate-400">Total Receipts</td>
+                  <td className="px-4 py-2 text-right">{stats?.totalReceiptMS.toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right">{stats?.totalReceiptHSD.toLocaleString()}</td>
+                  <td className="px-4 py-2"></td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </div>
 
       {/* Sales Variation Table */}
-      <div className="bg-white rounded-2xl md:rounded-[3rem] shadow-sm overflow-hidden border border-slate-200">
-        <div className="p-6 md:p-8 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl border border-blue-200">
-              <TrendingUp size={24} />
-            </div>
-            <div>
-              <h3 className="font-black text-slate-800 text-lg md:text-xl">Sales Variation Audit</h3>
-              <p className="text-slate-500 text-xs md:text-sm font-medium">Comparison between Tank Stock & Nozzle Meters</p>
-            </div>
+      <div className="bg-white rounded-xl shadow-sm overflow-hidden border border-slate-200">
+        <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">Sales Variation Audit</h3>
           </div>
-          <div className="flex items-center gap-2 text-[10px] md:text-xs font-bold text-slate-400 bg-slate-50 px-4 py-2 rounded-xl border border-slate-200">
-            <AlertCircle size={14} className="text-amber-500" />
-            Formula: [Nozzle Sale - Tank Sale]
+          <div className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider">
+            Formula: [Noz - Tank]
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full">
+          {/* Mobile Tank Selector */}
+          <div className="md:hidden flex gap-2 p-4 pt-0 border-b border-slate-100">
+            {['T1', 'T2', 'T3'].map(t => (
+              <button
+                key={t}
+                onClick={() => setActiveMobileTank(t as any)}
+                className={`flex-1 py-1.5 text-[10px] font-bold rounded-lg border transition-colors ${activeMobileTank === t ? 'bg-slate-800 text-white border-slate-800 shadow-md' : 'bg-white text-slate-500 border-slate-200'}`}
+              >
+                {t === 'T1' ? 'Tank 1 (HSD)' : t === 'T2' ? 'Tank 2 (HSD)' : 'Tank 3 (MS)'}
+              </button>
+            ))}
+          </div>
+          <table className="w-full text-xs">
             <thead>
               <tr className="bg-slate-50/80">
-                <th rowSpan={2} className="px-6 md:px-8 py-6 text-left text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] border-r border-slate-200 border-b">Date</th>
-                <th colSpan={3} className="px-4 py-4 text-center text-[10px] font-black text-blue-600 uppercase tracking-[0.2em] border-b border-slate-200 border-r">Motor Spirit (MS)</th>
-                <th colSpan={3} className="px-4 py-4 text-center text-[10px] font-black text-emerald-600 uppercase tracking-[0.2em] border-b border-slate-200">Diesel (HSD)</th>
+                <th rowSpan={2} className="px-4 py-3 text-left text-[9px] font-bold text-slate-500 uppercase tracking-widest border-r border-slate-200 border-b">Date / Shift</th>
+                <th colSpan={3} className={`px-2 py-2 text-center text-[9px] font-bold text-blue-600 uppercase tracking-widest border-b border-slate-200 border-r bg-blue-50/30 ${activeMobileTank === 'T1' ? '' : 'hidden md:table-cell'}`}>Tank 1 (HSD)</th>
+                <th colSpan={3} className={`px-2 py-2 text-center text-[9px] font-bold text-emerald-600 uppercase tracking-widest border-b border-slate-200 border-r bg-emerald-50/30 ${activeMobileTank === 'T2' ? '' : 'hidden md:table-cell'}`}>Tank 2 (HSD)</th>
+                <th colSpan={3} className={`px-2 py-2 text-center text-[9px] font-bold text-amber-600 uppercase tracking-widest border-b border-slate-200 bg-amber-50/30 ${activeMobileTank === 'T3' ? '' : 'hidden md:table-cell'}`}>Tank 3 (MS)</th>
               </tr>
-              <tr className="bg-slate-50/50">
-                <th className="px-4 py-4 text-center text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">Nozzle</th>
-                <th className="px-4 py-4 text-center text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">Tank</th>
-                <th className="px-4 py-4 text-center text-[9px] font-black text-slate-400 uppercase tracking-widest border-r border-b border-slate-200">Var</th>
-                <th className="px-4 py-4 text-center text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">Nozzle</th>
-                <th className="px-4 py-4 text-center text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">Tank</th>
-                <th className="px-4 py-4 text-center text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-200">Var</th>
+              <tr className="bg-slate-50/30">
+                {/* T1 */}
+                <th className={`px-2 py-1.5 text-center text-[8px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 ${activeMobileTank === 'T1' ? '' : 'hidden md:table-cell'}`}>Noz</th>
+                <th className={`px-2 py-1.5 text-center text-[8px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 ${activeMobileTank === 'T1' ? '' : 'hidden md:table-cell'}`}>Tank</th>
+                <th className={`px-2 py-1.5 text-center text-[8px] font-bold text-slate-400 uppercase tracking-widest border-r border-b border-slate-200 ${activeMobileTank === 'T1' ? '' : 'hidden md:table-cell'}`}>Var</th>
+                {/* T2 */}
+                <th className={`px-2 py-1.5 text-center text-[8px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 ${activeMobileTank === 'T2' ? '' : 'hidden md:table-cell'}`}>Noz</th>
+                <th className={`px-2 py-1.5 text-center text-[8px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 ${activeMobileTank === 'T2' ? '' : 'hidden md:table-cell'}`}>Tank</th>
+                <th className={`px-2 py-1.5 text-center text-[8px] font-bold text-slate-400 uppercase tracking-widest border-r border-b border-slate-200 ${activeMobileTank === 'T2' ? '' : 'hidden md:table-cell'}`}>Var</th>
+                {/* T3 */}
+                <th className={`px-2 py-1.5 text-center text-[8px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 ${activeMobileTank === 'T3' ? '' : 'hidden md:table-cell'}`}>Noz</th>
+                <th className={`px-2 py-1.5 text-center text-[8px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 ${activeMobileTank === 'T3' ? '' : 'hidden md:table-cell'}`}>Tank</th>
+                <th className={`px-2 py-1.5 text-center text-[8px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 ${activeMobileTank === 'T3' ? '' : 'hidden md:table-cell'}`}>Var</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200">
+            <tbody className="divide-y divide-slate-100">
               {stats?.variationData.map((row, i) => (
-                <tr key={i} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="px-6 md:px-8 py-5 font-bold text-slate-700 border-r border-slate-200 whitespace-nowrap">{format(parseISO(row.date), 'dd MMM')}</td>
-
-                  {/* MS */}
-                  <td className="px-4 py-4 text-center text-slate-800 font-medium border-r border-slate-100">{row.ms.nozzle.toLocaleString()}</td>
-                  <td className="px-4 py-4 text-center text-slate-800 font-medium border-r border-slate-100">{row.ms.tank.toLocaleString()}</td>
-                  <td className={`px-4 py-4 text-center font-black border-r border-slate-200 ${row.ms.diff >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                    {row.ms.diff > 0 ? '+' : ''}{row.ms.diff.toLocaleString()}
+                <tr key={i} className="hover:bg-slate-50/50 transition-colors">
+                  <td className="px-4 py-2 font-medium text-slate-700 border-r border-slate-100 whitespace-nowrap">
+                    <span className="text-slate-400 text-[9px] mr-1">S{row.shift_number}</span>
+                    {format(parseISO(row.date), 'dd MMM')}
                   </td>
 
-                  {/* HSD */}
-                  <td className="px-6 py-4 text-center text-slate-800 font-medium border-r border-slate-100">{row.hsd.nozzle.toLocaleString()}</td>
-                  <td className="px-6 py-4 text-center text-slate-800 font-medium border-r border-slate-100">{row.hsd.tank.toLocaleString()}</td>
-                  <td className={`px-6 py-4 text-center font-black ${row.hsd.diff >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                    {row.hsd.diff > 0 ? '+' : ''}{row.hsd.diff.toLocaleString()}
+                  {/* Tank 1 */}
+                  <td className={`px-2 py-2 text-center text-slate-600 ${activeMobileTank === 'T1' ? '' : 'hidden md:table-cell'}`}>{row.t1.nozzle.toLocaleString()}</td>
+                  <td className={`px-2 py-2 text-center text-slate-600 ${activeMobileTank === 'T1' ? '' : 'hidden md:table-cell'}`}>{row.t1.tank.toLocaleString()}</td>
+                  <td className={`px-2 py-2 text-center font-bold border-r border-slate-100 ${row.t1.diff >= 0 ? 'text-emerald-600' : 'text-red-500'} ${activeMobileTank === 'T1' ? '' : 'hidden md:table-cell'}`}>
+                    {row.t1.diff > 0 ? '+' : ''}{row.t1.diff.toLocaleString()}
+                  </td>
+
+                  {/* Tank 2 */}
+                  <td className={`px-2 py-2 text-center text-slate-600 ${activeMobileTank === 'T2' ? '' : 'hidden md:table-cell'}`}>{row.t2.nozzle.toLocaleString()}</td>
+                  <td className={`px-2 py-2 text-center text-slate-600 ${activeMobileTank === 'T2' ? '' : 'hidden md:table-cell'}`}>{row.t2.tank.toLocaleString()}</td>
+                  <td className={`px-2 py-2 text-center font-bold border-r border-slate-100 ${row.t2.diff >= 0 ? 'text-emerald-600' : 'text-red-500'} ${activeMobileTank === 'T2' ? '' : 'hidden md:table-cell'}`}>
+                    {row.t2.diff > 0 ? '+' : ''}{row.t2.diff.toLocaleString()}
+                  </td>
+
+                  {/* Tank 3 */}
+                  <td className={`px-2 py-2 text-center text-slate-600 ${activeMobileTank === 'T3' ? '' : 'hidden md:table-cell'}`}>{row.t3.nozzle.toLocaleString()}</td>
+                  <td className={`px-2 py-2 text-center text-slate-600 ${activeMobileTank === 'T3' ? '' : 'hidden md:table-cell'}`}>{row.t3.tank.toLocaleString()}</td>
+                  <td className={`px-2 py-2 text-center font-bold ${row.t3.diff >= 0 ? 'text-emerald-600' : 'text-red-500'} ${activeMobileTank === 'T3' ? '' : 'hidden md:table-cell'}`}>
+                    {row.t3.diff > 0 ? '+' : ''}{row.t3.diff.toLocaleString()}
                   </td>
                 </tr>
               ))}
               {stats?.variationData.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="py-20 text-center text-slate-500 font-bold italic">
-                    Insufficient data to calculate sales variation
+                  <td colSpan={10} className="py-8 text-center text-slate-400 italic">
+                    No data available for this period.
                   </td>
                 </tr>
               )}
             </tbody>
-            <tfoot className="bg-slate-50 font-black text-slate-800 border-t border-slate-300">
+            <tfoot className="bg-slate-50 border-t border-slate-200">
               <tr>
-                <td className="px-8 py-6 border-r border-slate-200 uppercase text-[10px] tracking-widest">Monthly Totals</td>
-                <td className="px-6 py-5 text-center text-slate-800 border-r border-slate-100">{stats?.variationData.reduce((s, r) => s + r.ms.nozzle, 0).toLocaleString()}</td>
-                <td className="px-6 py-5 text-center text-slate-800 border-r border-slate-100">{stats?.variationData.reduce((s, r) => s + r.ms.tank, 0).toLocaleString()}</td>
-                <td className={`px-6 py-5 text-center border-r border-slate-200 ${stats?.totalMsVariation! >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                  {stats?.totalMsVariation! > 0 ? '+' : ''}{stats?.totalMsVariation?.toLocaleString()}
+                <td className="px-4 py-3 border-r border-slate-200 font-bold text-[9px] uppercase tracking-widest text-slate-600">Totals</td>
+                {/* T1 */}
+                <td className={`px-2 py-3 text-center text-slate-700 font-semibold ${activeMobileTank === 'T1' ? '' : 'hidden md:table-cell'}`}>{stats?.totalT1Sales.toLocaleString()}</td>
+                <td className={`px-2 py-3 text-center text-slate-700 font-semibold ${activeMobileTank === 'T1' ? '' : 'hidden md:table-cell'}`}>{stats?.variationData.reduce((s, r) => s + r.t1.tank, 0).toLocaleString()}</td>
+                <td className={`px-2 py-3 text-center font-bold border-r border-slate-200 ${stats?.totalT1Variation! >= 0 ? 'text-emerald-600' : 'text-red-600'} ${activeMobileTank === 'T1' ? '' : 'hidden md:table-cell'}`}>
+                  {stats?.totalT1Variation! > 0 ? '+' : ''}{stats?.totalT1Variation?.toLocaleString()}
                 </td>
-                <td className="px-6 py-5 text-center text-slate-800 border-r border-slate-100">{stats?.variationData.reduce((s, r) => s + r.hsd.nozzle, 0).toLocaleString()}</td>
-                <td className="px-6 py-5 text-center text-slate-800 border-r border-slate-100">{stats?.variationData.reduce((s, r) => s + r.hsd.tank, 0).toLocaleString()}</td>
-                <td className={`px-6 py-5 text-center ${stats?.totalHsdVariation! >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                  {stats?.totalHsdVariation! > 0 ? '+' : ''}{stats?.totalHsdVariation?.toLocaleString()}
+                {/* T2 */}
+                <td className={`px-2 py-3 text-center text-slate-700 font-semibold ${activeMobileTank === 'T2' ? '' : 'hidden md:table-cell'}`}>{stats?.totalT2Sales.toLocaleString()}</td>
+                <td className={`px-2 py-3 text-center text-slate-700 font-semibold ${activeMobileTank === 'T2' ? '' : 'hidden md:table-cell'}`}>{stats?.variationData.reduce((s, r) => s + r.t2.tank, 0).toLocaleString()}</td>
+                <td className={`px-2 py-3 text-center font-bold border-r border-slate-200 ${stats?.totalT2Variation! >= 0 ? 'text-emerald-600' : 'text-red-600'} ${activeMobileTank === 'T2' ? '' : 'hidden md:table-cell'}`}>
+                  {stats?.totalT2Variation! > 0 ? '+' : ''}{stats?.totalT2Variation?.toLocaleString()}
+                </td>
+                {/* T3 */}
+                <td className={`px-2 py-3 text-center text-slate-700 font-semibold ${activeMobileTank === 'T3' ? '' : 'hidden md:table-cell'}`}>{stats?.totalT3Sales.toLocaleString()}</td>
+                <td className={`px-2 py-3 text-center text-slate-700 font-semibold ${activeMobileTank === 'T3' ? '' : 'hidden md:table-cell'}`}>{stats?.variationData.reduce((s, r) => s + r.t3.tank, 0).toLocaleString()}</td>
+                <td className={`px-2 py-3 text-center font-bold ${stats?.totalT3Variation! >= 0 ? 'text-emerald-600' : 'text-red-600'} ${activeMobileTank === 'T3' ? '' : 'hidden md:table-cell'}`}>
+                  {stats?.totalT3Variation! > 0 ? '+' : ''}{stats?.totalT3Variation?.toLocaleString()}
                 </td>
               </tr>
             </tfoot>

@@ -53,11 +53,11 @@ export default function Sidebar() {
             label: t('dsrReport', language),
             icon: <FileSpreadsheet size={20} />
         },
-        {
+        ...(isAdmin ? [{
             href: '/analytics',
             label: "Analytics",
             icon: <BarChart3 size={20} />
-        }
+        }] : [])
     ];
 
     return (
